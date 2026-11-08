@@ -25,3 +25,9 @@ training/runs/*/gguf/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Temporary training cache
+unsloth_compiled_cache/
+
+# Additional generated model exports
+training/runs/*/gguf_gguf/
