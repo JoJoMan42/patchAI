@@ -37,12 +37,24 @@ def write_text(file: str | Path, text: str) -> None:
     Path(file).write_bytes(text.encode("utf-8"))
 
 
+PROMPT_TAGS = "vulnerable_code|previous_fix|fixed_code|code|python"
+_OPEN_TAG = re.compile(rf"^\s*<({PROMPT_TAGS})>[ \t]*\n?")
+_CLOSE_TAG = re.compile(rf"\n?[ \t]*</({PROMPT_TAGS})>\s*$")
+_FENCE = re.compile(r"^\s*```[a-zA-Z]*\n(.*?)\n?\s*```\s*$", re.DOTALL)
+
+
 def clean_model_code(code: str) -> str:
-    """Remove markdown fences and common indentation from code the model returned."""
+    """Remove wrapping the model put around its code: markdown fences, and the tags from our
+    prompt (some models answer "<vulnerable_code>def f(): ...</vulnerable_code>"). Then dedent.
+
+    This matters for a fair comparison: without it, a correct fix wrapped in tags would be
+    counted as a syntax error.
+    """
     code = code.strip("\n")
-    fence = re.match(r"^\s*```[a-zA-Z]*\n(.*?)\n?\s*```\s*$", code, re.DOTALL)
-    if fence:
-        code = fence.group(1)
+    for _ in range(2):  # tags inside fences, or fences inside tags
+        if fence := _FENCE.match(code):
+            code = fence.group(1)
+        code = _CLOSE_TAG.sub("", _OPEN_TAG.sub("", code, count=1), count=1)  # Python never starts/ends like this
     return textwrap.dedent(code).strip("\n")
 
 

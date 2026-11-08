@@ -98,3 +98,35 @@ def test_the_original_project_is_never_modified(shop, shop_findings):
     fix_finding(shop, finding_for(shop_findings, "CWE-89"), model="fake",
                 chat_fn=scripted_model(GOOD_FIXES["CWE-89"]))
     assert (shop / "shop" / "db.py").read_bytes() == before
+
+
+# ---- v2: retries see the previous fix and the real error; repeated answers aren't re-checked ----
+
+CRASHING_SECRET_FIX = FixProposal(status="fixed", fixed_code='ADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]',
+                                  explanation="Read it from the environment.", confidence=0.9)
+
+
+def test_the_real_error_reaches_the_model(shop, shop_findings, monkeypatch):
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    model = scripted_model(CRASHING_SECRET_FIX, GOOD_FIXES["CWE-798"])
+    result = fix_finding(shop, finding_for(shop_findings, "CWE-798"), model="fake", chat_fn=model)
+    tests = next(c for c in result.attempts[0].checks if c.name == "tests")
+    assert not tests.passed and "KeyError: 'ADMIN_PASSWORD'" in tests.details  # not just "<test run error>"
+    assert "KeyError: 'ADMIN_PASSWORD'" in model.prompts[1]
+    assert '<previous_fix>\nADMIN_PASSWORD = os.environ["ADMIN_PASSWORD"]\n</previous_fix>' in model.prompts[1]
+    assert result.verdict == "fixed"
+
+
+def test_a_repeated_answer_is_not_checked_again(shop, shop_findings):
+    model = scripted_model(HAND_ESCAPED_FIX)  # the same wrong answer every time
+    result = fix_finding(shop, finding_for(shop_findings, "CWE-89"), model="fake", max_attempts=3, chat_fn=model)
+    assert result.verdict == "failed" and len(result.attempts) == 3
+    assert all("same code as attempt 1" in c.details for c in result.attempts[2].checks if c.name != "format")
+    assert "exactly the same code" in model.prompts[2]
+
+
+def test_code_wrapped_in_prompt_tags_still_counts(shop, shop_findings):
+    good = GOOD_FIXES["CWE-89"]
+    wrapped = good.model_copy(update={"fixed_code": f"<vulnerable_code>{good.fixed_code}</vulnerable_code>"})
+    result = fix_finding(shop, finding_for(shop_findings, "CWE-89"), model="fake", chat_fn=scripted_model(wrapped))
+    assert result.verdict == "fixed"

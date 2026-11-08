@@ -12,6 +12,7 @@ ollama_url: http://localhost:11434
 
 generation:
   temperature: 0.1
+  retry_temperature: 0.4  # a little more variety on retries, so the model doesn't repeat itself
   context_window: 8192  # tokens the model can read at once
   max_output_tokens: 1024
 

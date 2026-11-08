@@ -31,3 +31,12 @@ unsloth_compiled_cache/
 
 # Additional generated model exports
 training/runs/*/gguf_gguf/
+
+# v2 runner
+logs/
+eval/results/smoke*/
+training/runs/*/.exported
+data/real_fixes/cache/
+
+# Downloaded delivery folders and model files (never commit: 2 GB)
+PatchAI_Final_Delivery*/

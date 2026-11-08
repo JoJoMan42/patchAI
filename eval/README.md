@@ -20,18 +20,30 @@ Each case folder has `case.json` (type, file, split, the reference fix) and `pro
 
 ## Running it
 
-```bash
-# all models in config.yaml (models.compare), test split
-python eval/run_eval.py --run-name final
+On the GPU laptop, `bash run_4060.sh` runs the whole v2 experiment. By hand:
 
+```bash
 # a quick check first
 python eval/run_eval.py --split dev --limit 3 --run-name smoke
 
-# make the tables and charts
-python eval/report.py --run final
+# the experiment: normal 3B, our v1 and v2 models, normal 7B, on the test split
+python eval/run_eval.py --run-name v2 --models qwen2.5-coder:3b patchai-3b-v1 patchai-3b qwen2.5-coder:7b
+
+# tables and charts
+python eval/report.py --run v2
 ```
 
-The run can be stopped and restarted at any time: finished cases are skipped. Expect roughly 30–90 seconds per case per model on a laptop, so about 1–3 hours for 3 models. Run it overnight or split models across laptops (`--models patchai-3b` on one, `--models qwen2.5-coder:7b` on another, same `--run-name`, then merge the `results.jsonl` files).
+The run can be stopped and restarted at any time: finished cases are skipped. Expect roughly 10–30 seconds per case per model on the 4060.
+
+## The runs in this repo
+
+| Run | What it is |
+| --- | --- |
+| `v1` | The first experiment (2026-11-08): normal 3B, patchai-3b v1, normal 7B. **Scored with the old parser**, which counted fixes wrapped in `<vulnerable_code>` tags as syntax errors; that hurt the normal models (the 7B lost 11 cases this way). Kept as the record of what happened. |
+| `v1_rescored` | The same recorded answers, re-checked with the fixed parser and checks (`python eval/rescore.py --run v1`, no model needed). **The fair v1 numbers.** |
+| `v2` | After the v1 error analysis: improved training data (+ real CVE fixes), retry prompts that show the previous fix and the real error. Made by `run_4060.sh`. |
+
+`eval/rescore.py` replays a run's recorded model answers through today's pipeline. When the first answer passes, the result is exact; when it still fails, the model's next recorded answer (written after the old retry prompt) is replayed as it was.
 
 ## Outputs (`eval/results/<run-name>/`)
 

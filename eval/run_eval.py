@@ -1,7 +1,7 @@
 """Runs every test case through the full PatchAI pipeline with each model, and saves the results.
 
   python eval/run_eval.py                                     # models from config.yaml (models.compare)
-  python eval/run_eval.py --models qwen2.5-coder:3b patchai-3b --run-name final
+  python eval/run_eval.py --models qwen2.5-coder:3b patchai-3b --run-name v2
   python eval/run_eval.py --split dev --limit 3               # quick check on the dev set
   python eval/run_eval.py --no-rag --run-name no_rag          # optional: the same run without RAG
 
@@ -104,6 +104,10 @@ def write_manifest(out: Path, args, models: list[str], cases: list[dict]) -> Non
         commit = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip()
     except OSError:
         commit = ""
+    previous = out / "manifest.json"
+    if previous.exists():  # models added to the run later (e.g. the DPO model) keep the earlier ones listed
+        earlier = json.loads(previous.read_text(encoding="utf-8")).get("models", [])
+        models = earlier + [m for m in models if m not in earlier]
     manifest = {
         "started": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "models": models, "split": args.split, "cases": len(cases), "max_attempts": args.attempts,

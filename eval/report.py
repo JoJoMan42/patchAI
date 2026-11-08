@@ -67,7 +67,7 @@ def percent_axis(ax) -> None:
 
 def chart_fix_rate(summary: dict, colors: dict, out: Path) -> None:
     models = list(colors)
-    fig, ax = plt.subplots(figsize=(7, 4.2), facecolor=SURFACE)
+    fig, ax = plt.subplots(figsize=(max(7, 1.9 * len(models)), 4.2), facecolor=SURFACE)
     rates = [summary[m]["fix_rate"] for m in models]
     low = [summary[m]["fix_rate"] - summary[m]["fix_rate_low"] for m in models]
     high = [summary[m]["fix_rate_high"] - summary[m]["fix_rate"] for m in models]
@@ -183,12 +183,16 @@ def main() -> None:
     chart_quality(summary, colors, out)
     chart_failures(reasons, colors, out)
 
+    def shop(model: str) -> str:  # the hand-written demo-shop cases, reported separately
+        rows = [r for r in records if r["model"] == model and r.get("source") != "generated"]
+        return f"{sum(r['verdict'] == 'fixed' for r in rows)}/{len(rows)}" if rows else "-"
+
     lines = ["# Evaluation results", "", f"Run `{out.name}`, {len(records)} runs.", "",
-             "| Model | Fix rate | 95% interval | First try | Fake fixes | Unreadable | Guard blocked | Avg attempts | Avg time |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| Model | Fix rate | 95% interval | Demo shop | First try | Fake fixes | Unreadable | Guard blocked | Avg attempts | Avg time |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for m, s in table.iterrows():
         lines.append(f"| {m} | **{s.fix_rate:.0%}** ({int(s.fixed)}/{int(s.cases)}) | {s.fix_rate_low:.0%}–{s.fix_rate_high:.0%} | "
-                     f"{s.first_try_fix_rate:.0%} | {s.fake_fix_rate:.0%} | {s.format_error_rate:.0%} | "
+                     f"{shop(m)} | {s.first_try_fix_rate:.0%} | {s.fake_fix_rate:.0%} | {s.format_error_rate:.0%} | "
                      f"{s.guard_rejection_rate:.0%} | {s.avg_attempts:.1f} | {s.avg_seconds:.0f}s |")
     lines += ["", "## Fix rate per vulnerability type", "", "| Type | " + " | ".join(colors) + " |",
               "| --- | " + " | ".join("---" for _ in colors) + " |"]

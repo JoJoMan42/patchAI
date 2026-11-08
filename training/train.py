@@ -5,7 +5,7 @@ Needs an NVIDIA GPU (an RTX 4060 laptop with 8 GB is enough). Run on the GPU mac
     python training/make_dataset.py          # if data/training/train.jsonl doesn't exist yet
     python training/train.py
 Then turn it into an Ollama model:
-    python training/export.py --run training/runs/sft --name patchai-3b
+    python training/export.py --run training/runs/v2 --name patchai-3b
 
 Outputs go to training/runs/<name>/:
     lora/          the trained LoRA adapter (small, about 100 MB)
@@ -32,7 +32,7 @@ DATA = ROOT / "data" / "training"
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="QLoRA fine-tuning for PatchAI")
     p.add_argument("--base-model", default="unsloth/Qwen2.5-Coder-3B-Instruct")
-    p.add_argument("--run-name", default="sft")
+    p.add_argument("--run-name", default="v2", help="folder under training/runs/ (v1 was the first model)")
     p.add_argument("--max-seq-length", type=int, default=4096)
     p.add_argument("--epochs", type=float, default=2)
     p.add_argument("--lr", type=float, default=2e-4)

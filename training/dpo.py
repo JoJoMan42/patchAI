@@ -144,7 +144,7 @@ if __name__ == "__main__":
     c.add_argument("--model", default="patchai-3b")
     c.add_argument("--seed", type=int, default=1234)
     t = sub.add_parser("train")
-    t.add_argument("--sft-run", type=Path, default=ROOT / "training" / "runs" / "sft")
+    t.add_argument("--sft-run", type=Path, default=ROOT / "training" / "runs" / "v2")
     t.add_argument("--run-name", default="dpo")
     t.add_argument("--beta", type=float, default=0.1)
     t.add_argument("--lr", type=float, default=5e-6)

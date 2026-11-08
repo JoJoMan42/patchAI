@@ -1,11 +1,12 @@
 """Step 3: ask the model for a fix, check it, and retry with the error if it fails.
 
 One attempt:
-  1. build the prompt (with the error from the previous attempt, if any)
+  1. build the prompt (on a retry: the previous fix and the exact error it caused)
   2. ask the model, parse its JSON answer            -> check "format"
   3. splice the fix into the file, run the guard     -> check "guard"
   4. on a temporary copy: tests, security test, scan -> checks "tests", "security_test", "rescan"
 The loop stops at the first attempt that passes everything, or after max_attempts.
+An answer identical to an earlier failed one is not checked again: it gets the same result.
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ from typing import Callable
 from pydantic import ValidationError
 
 from patchai import checks, llm
+from patchai.config import get_config
 from patchai.guard import check_fix
 from patchai.models import Attempt, CheckResult, CodeContext, Finding, FixProposal, RetrievedChunk
-from patchai.patching import apply_fix, make_diff, read_text
+from patchai.patching import apply_fix, clean_model_code, make_diff, read_text
 from patchai.prompts import build_prompt
 from patchai.scan import scan
 
@@ -49,17 +51,26 @@ def fix(project_dir: str | Path, finding: Finding, context: CodeContext, retriev
     """Run the fix-and-check loop. Returns every attempt (the last one decides the verdict)."""
     project_dir = Path(project_dir)
     emit = on_event or (lambda stage, message: None)
-    chat_fn = chat_fn or llm.chat
+    retry_temperature = get_config()["generation"].get("retry_temperature")
+
+    def ask(messages: list[dict], number: int) -> llm.LLMReply:
+        if chat_fn is not None:  # a scripted model in tests
+            return chat_fn(messages, model)
+        # Retries use a slightly higher temperature, so the model doesn't repeat the same answer.
+        return llm.chat(messages, model, temperature=None if number == 1 else retry_temperature)
+
     original_text = read_text(project_dir / finding.file_path)
     baseline: set[str] | None = None  # tests failing before the fix (computed once, when needed)
     findings_before: list[Finding] | None = None
     attempts: list[Attempt] = []
     error: str | None = None
+    previous_fix: str | None = None
+    tried: dict[str, Attempt] = {}  # fixed code -> the attempt that already checked it
 
     for number in range(1, max_attempts + 1):
         started = time.perf_counter()
         emit("generate", f"Attempt {number}: asking {model} for a fix")
-        reply = chat_fn(build_prompt(finding, context, retrieved, error), model)
+        reply = ask(build_prompt(finding, context, retrieved, error, previous_fix), number)
         attempt = Attempt(number=number, proposal=None, raw_output=reply.text,
                           tokens_in=reply.tokens_in, tokens_out=reply.tokens_out)
         attempts.append(attempt)
@@ -69,7 +80,7 @@ def fix(project_dir: str | Path, finding: Finding, context: CodeContext, retriev
             proposal = parse_proposal(reply.text)
         except ValueError as e:
             attempt.checks.append(CheckResult(name="format", passed=False, details=str(e)))
-            error = f"Your answer could not be read. {e} Answer with JSON only."
+            error, previous_fix = f"Your answer could not be read. {e} Answer with JSON only.", None
             attempt.seconds = time.perf_counter() - started
             continue
         attempt.proposal = proposal
@@ -79,6 +90,19 @@ def fix(project_dir: str | Path, finding: Finding, context: CodeContext, retriev
             emit("done", f"The model answered '{proposal.status}': {proposal.explanation}")
             attempt.seconds = time.perf_counter() - started
             break
+
+        code = clean_model_code(proposal.fixed_code)
+        previous_fix = code
+        if code in tried:  # the same code as an attempt that already failed: same result, no need to re-run
+            same = tried[code]
+            attempt.diff, attempt.patched_file_text = same.diff, same.patched_file_text
+            attempt.checks += [c.model_copy(update={"details": f"(same code as attempt {same.number}) {c.details}"})
+                               for c in same.checks if c.name != "format"]
+            error = f"You returned exactly the same code as attempt {same.number}, which already failed. {error or ''}"
+            emit("retry", f"Attempt {number} repeated attempt {same.number}")
+            attempt.seconds = time.perf_counter() - started
+            continue
+        tried[code] = attempt
 
         # Guard: fast safety rules on the patched file.
         emit("guard", f"Attempt {number}: checking the fix with the safety guard")

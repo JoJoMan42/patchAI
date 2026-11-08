@@ -1,0 +1,28 @@
+{
+  "examples": 21,
+  "cves": 14,
+  "projects": 14,
+  "by_cwe": {
+    "CWE-22": 2,
+    "CWE-502": 4,
+    "CWE-78": 4,
+    "CWE-79": 7,
+    "CWE-89": 4
+  },
+  "filtered": {
+    "change_too_large": 14,
+    "cve_limit": 15,
+    "fixed_version_still_flagged": 50,
+    "function_not_changed_by_fix": 90,
+    "function_renamed_or_removed": 2,
+    "kept": 21,
+    "loader_not_fully_safe": 1,
+    "not_in_a_function": 15,
+    "not_python3": 36,
+    "parameters_not_a_tuple": 1,
+    "signature_changed": 2,
+    "still_uses_a_shell": 1
+  },
+  "minutes": 2.4,
+  "source": "https://huggingface.co/datasets/hitoshura25/cvefixes (CVEfixes v1.0.8, Apache-2.0)"
+}

@@ -44,11 +44,30 @@ class Pair:
     explanation: str = ""
     status: str = "fixed"  # "false_positive" for safe code that a scanner flags anyway
     helper: str = ""  # another function in the same file, shown to the model as project code
+    # Typical wrong fixes for this pattern and the error our checks report for them, used to
+    # build realistic "retry" examples: [(wrong code, error message), ...]
+    mistakes: list[tuple[str, str]] = field(default_factory=list)
+    # Real-world examples (training/real_data.py) bring their whole file and their origin.
+    source_text: str = ""
+    source: str = "synthetic"
+    lines: tuple[int, int] | None = None  # where the vulnerable function sits in source_text
 
     def module(self) -> str:
         """The full vulnerable file."""
+        if self.source_text:
+            return self.source_text
         parts = [self.header.strip(), self.helper.strip(), self.vulnerable.strip()]
         return "\n\n\n".join(p for p in parts if p) + "\n"
+
+
+def test_error(test: str, error: str, counts: str = "1 failed, 2 passed in 0.31s") -> str:
+    """The error text our checks report when a project test fails (see patchai/checks.py)."""
+    return f"[tests] Tests that now fail: tests.test_module::{test}. {counts}. Error: {error}"
+
+
+def import_error(error: str) -> str:
+    """The error text when the fixed file crashes as soon as it is imported."""
+    return f"[tests] Tests that now fail: <the tests could not even start>. 1 error in 0.08s. Error: {error}"
 
 
 def doc(r: random.Random, text: str) -> str:
@@ -165,16 +184,26 @@ COMMANDS = [
     ("resize_image", "image_path", ["convert", "{arg}", "-resize", "50%", "small.png"], "Make a smaller copy of an image."),
     ("count_lines", "log_file", ["wc", "-l", "{arg}"], "Count the lines in a log file."),
     ("find_process", "process_name", ["pgrep", "-l", "{arg}"], "List running processes with this name."),
+    ("trace_route", "host", ["traceroute", "-m", "15", "{arg}"], "Show the network route to a host."),
+    ("fetch_url", "url", ["curl", "-s", "-o", "page.html", "{arg}"], "Download a web page."),
+    ("unzip_upload", "archive", ["unzip", "-o", "{arg}", "-d", "uploads"], "Extract an uploaded zip file."),
+    ("file_type", "filename", ["file", "--brief", "{arg}"], "Describe what kind of file this is."),
+    ("tail_log", "log_name", ["tail", "-n", "50", "{arg}"], "Show the end of a log file."),
+    ("checkout_branch", "branch", ["git", "checkout", "{arg}"], "Switch the working copy to a branch."),
+    ("convert_video", "video", ["ffmpeg", "-i", "{arg}", "out.mp4"], "Convert a video to MP4."),
+    ("whois_domain", "domain", ["whois", "{arg}"], "Look up who owns a domain."),
 ]
+ARG_ALIASES = {"host": ["hostname", "target"], "path": ["value", "folder_path"], "domain": ["name"],
+               "filename": ["name", "upload"], "branch": ["ref", "branch_name"], "url": ["link", "address"]}
 
 
 def command(r: random.Random) -> Pair:
     fn, arg, words, purpose = r.choice(COMMANDS)
-    arg = r.choice([arg, arg, "value" if arg == "path" else arg])
+    arg = r.choice([arg, arg] + ARG_ALIASES.get(arg, []))
     shell_text = " ".join(w.replace("{arg}", "{" + arg + "}") for w in words)
     as_list = "[" + ", ".join(arg if w == "{arg}" else f'"{w}"' for w in words) + "]"
     d = doc(r, purpose)
-    style = r.choice(["system", "run_shell", "check_output", "popen"])
+    style = r.choice(["system", "run_shell", "check_output", "popen", "call_shell"])
     header = "import os" if style in ("system", "popen") else "import subprocess"
     fix_imports = ["import subprocess"] if header == "import os" else []
     if style == "system":
@@ -186,10 +215,17 @@ def command(r: random.Random) -> Pair:
     elif style == "check_output":
         vuln = f"def {fn}({arg}):\n{d}    return subprocess.check_output(\"{shell_text.replace('{' + arg + '}', '%s')}\" % {arg}, shell=True, text=True)"
         fixed = f"def {fn}({arg}):\n{d}    return subprocess.check_output({as_list}, text=True)"
+    elif style == "call_shell":
+        vuln = f"def {fn}({arg}):\n{d}    return subprocess.call(\"{shell_text.replace('{' + arg + '}', '')}\" + {arg}, shell=True)" \
+            if words[-1] == "{arg}" else f"def {fn}({arg}):\n{d}    return subprocess.call(f\"{shell_text}\", shell=True)"
+        fixed = f"def {fn}({arg}):\n{d}    return subprocess.call({as_list})"
     else:
         vuln = f"def {fn}({arg}):\n{d}    with os.popen(f\"{shell_text}\") as pipe:\n        return pipe.read()"
         fixed = f"def {fn}({arg}):\n{d}    return subprocess.run({as_list}, capture_output=True, text=True).stdout"
-    return Pair("", "CWE-78", f"command_{style}", header, vuln, fixed, fix_imports=fix_imports,
+    quoted = vuln.replace(f"{{{arg}}}", f"{{shlex.quote({arg})}}") if "f\"" in vuln else ""
+    # {cwe} and {message} are filled in with the real finding by make_dataset.py
+    mistakes = [(quoted, "[rescan] The scanner still reports {cwe} here: {message}")] if quoted and quoted != vuln else []
+    return Pair("", "CWE-78", f"command_{style}", header, vuln, fixed, fix_imports=fix_imports, mistakes=mistakes,
                 explanation=f"The {arg} was put into a shell command, so characters like ; or && could run extra "
                             f"commands. The command is now a list of arguments run without a shell.")
 
@@ -308,26 +344,31 @@ def fake_secret(r: random.Random) -> str:
         else "".join(r.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(r.choice([16, 24, 32])))
 
 
+# Secrets are always read with os.environ.get(NAME, ""): os.environ[NAME] would crash the whole
+# program (and every test) on import when the variable isn't set.
+
 def secret_constant(r: random.Random) -> Pair:
     name = r.choice(SECRET_NAMES)
-    others = r.sample(["DEBUG = False", 'APP_NAME = "inventory"', "TIMEOUT_SECONDS = 30", 'REGION = "eu-west-1"'], 2)
+    others = r.sample(["DEBUG = False", 'APP_NAME = "inventory"', "TIMEOUT_SECONDS = 30", 'REGION = "eu-west-1"',
+                       "MAX_RETRIES = 3", 'LOG_LEVEL = "INFO"'], 2)
     header = "import os\n\n" + "\n".join(others)
     vuln = f'{name} = "{fake_secret(r)}"'
-    fixed = r.choice([f'{name} = os.environ.get("{name}", "")', f'{name} = os.environ["{name}"]'])
+    fixed = f'{name} = os.environ.get("{name}", "")'
     return Pair("", "CWE-798", "secret_constant", header, vuln, fixed,
                 explanation=f"The {name} was written in the source code, where anyone with the code can read it. It is "
-                            f"now read from the {name} environment variable.")
+                            f"now read from the {name} environment variable (empty if it is not set).",
+                mistakes=[(f'{name} = os.environ["{name}"]', import_error(f"KeyError: '{name}'"))])
 
 
 def secret_default_arg(r: random.Random) -> Pair:
-    param = r.choice(["password", "token", "secret"])
-    fn = r.choice(["connect", "open_session", "login", "create_client"])
-    env = f"APP_{param.upper()}"
+    param = r.choice(["password", "token", "secret", "passphrase"])
+    fn = r.choice(["connect", "open_session", "login", "create_client", "make_connection"])
+    env = r.choice([f"APP_{param.upper()}", f"SERVICE_{param.upper()}"])
     d = doc(r, "Open a connection to the service.")
     vuln = (f"def {fn}(host, user, {param}=\"{fake_secret(r)}\"):\n{d}"
             f"    return {{\"host\": host, \"user\": user, \"{param}\": {param}}}")
     fixed = (f"def {fn}(host, user, {param}=None):\n{d}"
-             f"    if {param} is None:\n        {param} = os.environ[\"{env}\"]\n"
+             f"    if {param} is None:\n        {param} = os.environ.get(\"{env}\", \"\")\n"
              f"    return {{\"host\": host, \"user\": user, \"{param}\": {param}}}")
     return Pair("", "CWE-798", "secret_default_arg", "import os", vuln, fixed,
                 explanation=f"A real {param} was the default argument, so it is stored in the code. The default is now "
@@ -336,24 +377,49 @@ def secret_default_arg(r: random.Random) -> Pair:
 
 def secret_kwarg(r: random.Random) -> Pair:
     kw = r.choice(["password", "token", "api_token"])
-    fn = r.choice(["get_client", "make_mailer", "build_api"])
-    env = r.choice(["MAIL_PASSWORD", "SERVICE_TOKEN", "API_TOKEN"])
+    fn = r.choice(["get_client", "make_mailer", "build_api", "open_api"])
+    env = r.choice(["MAIL_PASSWORD", "SERVICE_TOKEN", "API_TOKEN", "UPSTREAM_TOKEN"])
     cls = r.choice(["Client", "Mailer", "ApiSession"])
     d = doc(r, "Create the client used to talk to the service.")
     vuln = f"def {fn}(url):\n{d}    return {cls}(url, user=\"app\", {kw}=\"{fake_secret(r)}\")"
-    fixed = f"def {fn}(url):\n{d}    return {cls}(url, user=\"app\", {kw}=os.environ[\"{env}\"])"
+    fixed = f"def {fn}(url):\n{d}    return {cls}(url, user=\"app\", {kw}=os.environ.get(\"{env}\", \"\"))"
     header = f"import os\n\nfrom service_sdk import {cls}"
     return Pair("", "CWE-798", "secret_kwarg", header, vuln, fixed,
                 explanation=f"The {kw} was passed as a literal string, so it is visible in the code. It is now read "
                             f"from the {env} environment variable.")
 
 
+def secret_login_check(r: random.Random) -> Pair:
+    """A password checked against a literal inside an if: the secret must leave the code, and the
+    comparison must fail safely when the variable is not set."""
+    param = r.choice(["password", "passphrase", "token", "pwd"])
+    user = r.choice(["username", "user", "login_name"])
+    who = r.choice(["admin", "root", "support", "ops"])
+    fn = r.choice(["login", "check_login", "authenticate", "is_valid_login", "verify_user"])
+    env = r.choice([f"{who.upper()}_PASSWORD", "LOGIN_SECRET", f"{who.upper()}_{param.upper()}"])
+    value = fake_secret(r)
+    d = doc(r, f"True if these are the {who} credentials.")
+    ok, bad = r.choice([("return True", "return False"), ("return {\"ok\": True}", "return {\"ok\": False}")])
+    vuln = (f"def {fn}({user}, {param}):\n{d}    if {user} == \"{who}\" and {param} == \"{value}\":\n"
+            f"        {ok}\n    {bad}")
+    fixed = (f"def {fn}({user}, {param}):\n{d}    expected = os.environ.get(\"{env}\", \"\")\n"
+             f"    if {user} == \"{who}\" and expected and hmac.compare_digest({param}, expected):\n"
+             f"        {ok}\n    {bad}")
+    keep_secret = fixed.replace(f'os.environ.get("{env}", "")', f'"{value}"')
+    return Pair("", "CWE-798", "secret_login_check", "import os", vuln, fixed, fix_imports=["import hmac"],
+                explanation=f"The {who} {param} was written in the code. It now comes from the {env} environment "
+                            "variable, an empty value never matches, and hmac.compare_digest avoids timing leaks.",
+                mistakes=[(keep_secret, "[security_test] The vulnerability can still be exploited "
+                                        "(test_secret_is_not_in_the_code). 1 failed in 0.04s. "
+                                        f"Error: AssertionError: assert '{value}' not in source")])
+
+
 # ---------------------------------------------------------------- CWE-327 weak cryptography
 
 def crypto_password(r: random.Random) -> Pair:
     algo = r.choice(["md5", "sha1"])
-    param = r.choice(["password", "raw_password", "plain"])
-    fn = r.choice(["hash_password", "make_password_hash", "encode_password"])
+    param = r.choice(["password", "raw_password", "plain", "new_password", "secret"])
+    fn = r.choice(["hash_password", "make_password_hash", "encode_password", "store_password", "password_digest"])
     d = doc(r, "Hash a password before it is stored.")
     vuln = f"def {fn}({param}):\n{d}    return hashlib.{algo}({param}.encode()).hexdigest()"
     fixed = (f"def {fn}({param}):\n{d}    salt = secrets.token_bytes(16)\n"
@@ -366,22 +432,50 @@ def crypto_password(r: random.Random) -> Pair:
 
 def crypto_checksum(r: random.Random) -> Pair:
     algo = r.choice(["md5", "sha1"])
-    param = r.choice(["data", "content", "payload", "blob"])
-    fn = r.choice(["checksum", "file_fingerprint", "content_hash", "integrity_digest"])
+    param = r.choice(["data", "content", "payload", "blob", "chunk"])
+    fn = r.choice(["checksum", "file_fingerprint", "content_hash", "integrity_digest", "etag_for"])
     style = r.choice(["direct", "new"])
+    out = r.choice(["hexdigest", "hexdigest", "digest"])  # the fix keeps the same return type
     d = doc(r, "A fingerprint used to detect tampering.")
     v_call = f"hashlib.{algo}({param})" if style == "direct" else f'hashlib.new("{algo}", {param})'
-    vuln = f"def {fn}({param}):\n{d}    return {v_call}.hexdigest()"
-    fixed = f"def {fn}({param}):\n{d}    return hashlib.sha256({param}).hexdigest()"
+    vuln = f"def {fn}({param}):\n{d}    return {v_call}.{out}()"
+    fixed = f"def {fn}({param}):\n{d}    return hashlib.sha256({param}).{out}()"
     return Pair("", "CWE-327", "crypto_checksum", "import hashlib", vuln, fixed,
                 explanation=f"{algo.upper()} has known collisions, so an attacker can forge data with the same fingerprint. "
-                            "SHA-256 is used instead.")
+                            f"SHA-256 is used instead, still returning {'a hex string' if out == 'hexdigest' else 'bytes'}.")
+
+
+def crypto_stretch_key(r: random.Random) -> Pair:
+    """A key made from a passphrase with one fast hash. The fix uses PBKDF2 but must keep the
+    result deterministic (same passphrase -> same key) and keep returning raw bytes."""
+    algo = r.choice(["md5", "sha1"])
+    param = r.choice(["passphrase", "master_password", "secret_phrase", "pin"])
+    fn = r.choice(["unlock_key", "vault_key", "cipher_key", "backup_key", "session_key_for"])
+    salt = r.choice(["KEY_SALT", "VAULT_SALT", "APP_SALT"])
+    sized = r.random() < 0.5
+    d = doc(r, "The encryption key for this passphrase (the same passphrase always gives the same key).")
+    sig = f"def {fn}({param}, length=16):" if sized else f"def {fn}({param}):"
+    cut = "[:length]" if sized else ""
+    dklen = ", dklen=length" if sized else ""
+    vuln = f"{sig}\n{d}    return hashlib.{algo}({salt} + {param}.encode()).digest(){cut}"
+    fixed = f"{sig}\n{d}    return hashlib.pbkdf2_hmac(\"sha256\", {param}.encode(), {salt}, 600_000{dklen})"
+    header = f'import hashlib\n\n{salt} = b"{"".join(r.choice("abcdef0123456789") for _ in range(16))}"'
+    random_salt = fixed.replace(f"{salt}, 600_000", "secrets.token_bytes(16), 600_000")
+    as_hex = fixed + ".hex()"
+    return Pair("", "CWE-327", "crypto_stretch_key", header, vuln, fixed,
+                explanation=f"One round of {algo.upper()} is far too fast for deriving a key from a passphrase, so it can "
+                            "be brute-forced. PBKDF2-HMAC-SHA256 with 600,000 rounds is used; the key is still bytes and "
+                            "still the same for the same passphrase.",
+                mistakes=[(random_salt, test_error("test_same_passphrase_same_key",
+                                                   "AssertionError: assert b'\\x8f\\x1c...' == b'\\x02\\xd7...'")),
+                          (as_hex, test_error("test_key_is_bytes", "AssertionError: assert False"))])
 
 
 def crypto_token(r: random.Random) -> Pair:
     algo = r.choice(["md5", "sha1"])
-    param = r.choice(["email", "username", "user_id"])
-    fn = r.choice(["make_reset_token", "new_session_id", "invite_code", "confirmation_token"])
+    param = r.choice(["email", "username", "user_id", "account_id", "phone"])
+    fn = r.choice(["make_reset_token", "new_session_id", "invite_code", "confirmation_token", "unsubscribe_token",
+                   "magic_link_code"])
     d = doc(r, "A token sent to the user by email.")
     vuln = f"def {fn}({param}):\n{d}    raw = f\"{{{param}}}-{{time.time()}}\"\n    return hashlib.{algo}(raw.encode()).hexdigest()"
     fixed = f"def {fn}({param}):\n{d}    return secrets.token_urlsafe(32)"
@@ -393,8 +487,9 @@ def crypto_token(r: random.Random) -> Pair:
 # ---------------------------------------------------------------- CWE-502 unsafe deserialization
 
 def deser_pickle(r: random.Random) -> Pair:
-    what = r.choice(["session", "preferences", "cart", "settings", "profile"])
-    fn = f"load_{what}"
+    what = r.choice(["session", "preferences", "cart", "settings", "profile", "draft", "basket", "layout",
+                     "history", "filters"])
+    fn = r.choice([f"load_{what}", f"restore_{what}", f"read_{what}"])
     style = r.choice(["bytes", "b64", "file"])
     d = doc(r, f"Restore the saved {what}.")
     if style == "bytes":
@@ -415,8 +510,8 @@ def deser_pickle(r: random.Random) -> Pair:
 
 
 def deser_yaml(r: random.Random) -> Pair:
-    what = r.choice(["config", "catalog", "pipeline", "rules", "manifest"])
-    param = r.choice(["text", "yaml_text", "document", "raw"])
+    what = r.choice(["config", "catalog", "pipeline", "rules", "manifest", "workflow", "inventory", "schedule"])
+    param = r.choice(["text", "yaml_text", "document", "raw", "content"])
     loader = r.choice(["", ", Loader=yaml.Loader", ", Loader=yaml.FullLoader", ", Loader=yaml.UnsafeLoader"])
     fn = f"parse_{what}"
     d = doc(r, f"Parse an uploaded {what} file.")
@@ -428,10 +523,11 @@ def deser_yaml(r: random.Random) -> Pair:
 
 
 def deser_marshal(r: random.Random) -> Pair:
-    fn = r.choice(["read_cache", "decode_message", "restore_state"])
+    fn = r.choice(["read_cache", "decode_message", "restore_state", "unpack_job", "decode_payload"])
+    param = r.choice(["blob", "data", "raw", "message"])
     d = doc(r, "Turn received bytes back into data.")
-    vuln = f"def {fn}(blob):\n{d}    return marshal.loads(blob)"
-    fixed = f"def {fn}(blob):\n{d}    return json.loads(blob)"
+    vuln = f"def {fn}({param}):\n{d}    return marshal.loads({param})"
+    fixed = f"def {fn}({param}):\n{d}    return json.loads({param})"
     return Pair("", "CWE-502", "deser_marshal", "import marshal", vuln, fixed, fix_imports=["import json"],
                 explanation="marshal is not safe for untrusted data and can crash or misbehave on crafted input. "
                             "JSON is used instead.")
@@ -452,8 +548,8 @@ def fp_allowlisted_table(r: random.Random) -> Pair:
 
 
 def fp_constant_command(r: random.Random) -> Pair:
-    cmd = r.choice(["clear", "sync", "date", "uptime"])
-    fn = r.choice(["refresh_screen", "flush_disks", "show_date", "show_uptime"])
+    cmd = r.choice(["clear", "sync", "date", "uptime", "whoami", "df -h", "free -m", "hostname"])
+    fn = r.choice(["refresh_screen", "flush_disks", "show_date", "show_uptime", "system_info", "status_report"])
     vuln = f"def {fn}():\n    return os.system(\"{cmd}\")"
     return Pair("", "CWE-78", "fp_constant_command", "import os", vuln, vuln, status="false_positive",
                 explanation="The command is a fixed string with no user input, so it cannot be injected.")
@@ -461,8 +557,11 @@ def fp_constant_command(r: random.Random) -> Pair:
 
 def fp_not_a_secret(r: random.Random) -> Pair:
     name, value = r.choice([("PASSWORD_FIELD", "password"), ("TOKEN_TYPE", "bearer"),
-                            ("PASSWORD_MIN_LENGTH_MSG", "Password too short"), ("TOKEN_HEADER", "X-Auth-Token")])
-    header = "import os\n\nDEBUG = False"
+                            ("PASSWORD_MIN_LENGTH_MSG", "Password too short"), ("TOKEN_HEADER", "X-Auth-Token"),
+                            ("PASSWORD_INPUT_ID", "new-password"), ("TOKEN_COOKIE_NAME", "session_token"),
+                            ("PASSWORD_RESET_PATH", "/account/reset"), ("SECRET_LABEL", "Your secret question"),
+                            ("TOKEN_PARAM", "access_token"), ("PASSWORD_HINT", "At least 12 characters")])
+    header = "import os\n\n" + r.choice(["DEBUG = False", 'APP_NAME = "portal"', "PAGE_SIZE = 25"])
     vuln = f'{name} = "{value}"'
     return Pair("", "CWE-798", "fp_not_a_secret", header, vuln, vuln, status="false_positive",
                 explanation=f"{name} holds a label ('{value}'), not a credential, so nothing secret is in the code.")
@@ -473,32 +572,58 @@ FAMILIES = [
     command,
     path_open, path_pathlib, path_delete, path_send_file,
     xss_return, xss_template_string,
-    secret_constant, secret_default_arg, secret_kwarg,
-    crypto_password, crypto_checksum, crypto_token,
+    secret_constant, secret_default_arg, secret_kwarg, secret_login_check,
+    crypto_password, crypto_checksum, crypto_token, crypto_stretch_key,
     deser_pickle, deser_yaml, deser_marshal,
 ]
 FALSE_POSITIVE_FAMILIES = [fp_allowlisted_table, fp_constant_command, fp_not_a_secret]
 
 
 def generate(n: int, seed: int = 42, false_positive_share: float = 0.08) -> list[Pair]:
-    """Make `n` unique pairs, spread evenly over the vulnerability types."""
+    """Make `n` unique pairs: exactly `false_positive_share` false alarms, the rest split evenly
+    over the 7 vulnerability types.
+
+    Each type gets a fixed quota. If a type runs out of unique variations, the other types make
+    up the difference, never the false alarms. (v1 had a bug here: an exhausted type let false
+    alarms fill the gap, so 25% of the data became one false-alarm pattern.)
+    """
     r = random.Random(seed)
     by_cwe: dict[str, list] = {}
     for family in FAMILIES:
         by_cwe.setdefault(family(random.Random(0)).cwe, []).append(family)
     cwes = sorted(by_cwe)
-    pairs, seen = [], set()
-    attempts = 0
-    while len(pairs) < n and attempts < n * 50:
-        attempts += 1
-        if r.random() < false_positive_share:
-            pair = r.choice(FALSE_POSITIVE_FAMILIES)(r)
-        else:
-            pair = r.choice(by_cwe[cwes[len(pairs) % len(cwes)]])(r)
-        key = pair.header + pair.vulnerable
-        if key in seen:
-            continue
-        seen.add(key)
-        pair.id = f"{pair.family}-{len(pairs):05d}"
-        pairs.append(pair)
+    pairs: list[Pair] = []
+    seen: set[str] = set()
+
+    def draw(make, count: int) -> int:
+        """Add up to `count` new unique pairs from `make()`. Returns how many were added."""
+        added = tries = 0
+        while added < count and tries < count * 60:
+            tries += 1
+            pair = make()
+            key = pair.header + pair.helper + pair.vulnerable
+            if key in seen:
+                continue
+            seen.add(key)
+            pair.id = f"{pair.family}-{len(pairs):05d}"
+            pairs.append(pair)
+            added += 1
+        return added
+
+    n_false = round(n * false_positive_share)
+    n_real = n - n_false
+    missing = 0
+    for i, cwe in enumerate(cwes):
+        quota = n_real // len(cwes) + (1 if i < n_real % len(cwes) else 0)
+        missing += quota - draw(lambda: r.choice(by_cwe[cwe])(r), quota)
+    while missing > 0:  # spread any shortfall over all types, one at a time
+        added = sum(draw(lambda: r.choice(by_cwe[cwe])(r), 1) for cwe in cwes[: missing])
+        if added == 0:
+            break
+        missing -= added
+    for i, family in enumerate(FALSE_POSITIVE_FAMILIES):  # an even share per false-alarm pattern
+        quota = n_false // len(FALSE_POSITIVE_FAMILIES) + (1 if i < n_false % len(FALSE_POSITIVE_FAMILIES) else 0)
+        short = quota - draw(lambda: family(r), quota)
+        if short:
+            draw(lambda: fp_allowlisted_table(r), short)  # the pattern with the most variations
     return pairs

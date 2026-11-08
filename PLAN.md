@@ -15,23 +15,21 @@ Read [README.md](README.md) first. This file says what is built, what is left, a
 | Review app (Streamlit) | ✅ Built | `app/review_app.py` |
 | VS Code extension + local server | ✅ Built, compiles, server tested | `extension/`, `patchai/server.py` |
 | Demo shop (7 vulnerabilities, tests, attack tests) | ✅ Done | `demo_projects/vuln_shop/` |
-| Training data generator + dataset builder | ✅ Done, checked (all examples detected, every fix passes the scanners) | `training/synth.py`, `make_dataset.py` |
-| SFT training, export, DPO scripts | ✅ Written, **not yet run** (needs the GPU) | `training/train.py`, `export.py`, `dpo.py` |
+| Training data generator + dataset builder | ✅ v2: balanced, realistic retry examples, + 21 real CVE fixes | `training/synth.py`, `make_dataset.py`, `real_data.py` |
+| SFT training, export, DPO scripts | ✅ Run on the 4060 (v1); one-command runner for v2 | `training/`, `run_4060.sh` |
 | Benchmark (validated cases) | ✅ Generated | `eval/cases/` |
-| Evaluation runner + charts | ✅ Written, charts checked | `eval/run_eval.py`, `report.py` |
-| **Model trained** | ⬜ To do | 4060 laptop |
-| **Evaluation run with real models** | ⬜ To do | needs Ollama + the trained model |
+| Evaluation runner + charts + re-scoring | ✅ Done | `eval/run_eval.py`, `report.py`, `rescore.py` |
+| **Model v1** trained and evaluated | ✅ Done (2026-11-08) | `training/runs/v1/`, `eval/results/v1*/` |
+| **Model v2** (after v1 error analysis) | ⬜ To do: `bash run_4060.sh` on the 4060 | see [RUN_ON_4060.md](RUN_ON_4060.md) |
 | **Report, slides, demo rehearsal** | ⬜ To do | |
 
 ## What is left, in order
 
-1. **Everyone (day 1):** set up the project (README → Quick start), run `patchai doctor` and `python -m pytest`, try the review app with `qwen2.5-coder:3b`. Read the files you own until you can explain them.
-2. **Training (days 1–5):** on the 4060 laptop, follow `training/README.md`: build the dataset, train, export to Ollama as `patchai-3b`. Plan for 2 training runs.
-3. **Smoke test (day 3):** `python eval/run_eval.py --split dev --limit 3 --run-name smoke` with the base model, to check the whole evaluation loop on a real model.
-4. **Prompt check (days 3–5):** run the dev cases with the base model and read the failures in `eval/results/smoke/full/`. Prompt changes must happen **before** the final training run, because the model is trained on the prompt format.
-5. **Evaluation (days 6–8):** `python eval/run_eval.py --run-name final`, then `python eval/report.py --run final`. Split models across laptops if it's slow.
-6. **Bonus DPO (days 6–9, only if training went smoothly):** `training/dpo.py`, then add `patchai-3b-dpo` to the evaluation.
-7. **Report and demo (days 9–14):** charts from `eval/results/final/`, loss curve from `training/runs/sft/loss.png`, the demo script in the README, and a backup screen recording.
+1. **4060 laptop (one evening):** `git pull`, then `bash run_4060.sh` ([RUN_ON_4060.md](RUN_ON_4060.md)). It builds the v2 data, trains, exports, and runs the full comparison (normal 3B, v1, v2, normal 7B). Optional: `--dpo`.
+2. **Push the results** (the script prints the git commands), and put the `.gguf` and the full logs on Google Drive.
+3. **Demo laptop:** install Ollama, `python training/export.py --gguf <file> --name patchai-3b`, rehearse the demo in the README.
+4. **Report and slides (now, in parallel):** method from the READMEs, results from `eval/results/v1_rescored/` and later `v2/`, loss curves from `training/runs/v1|v2/loss.png`, the v1 → v2 error analysis from `training/README.md`.
+5. **Rehearse the demo 2–3 times** and record a backup video.
 
 ## Team split
 
@@ -58,6 +56,9 @@ Read [README.md](README.md) first. This file says what is built, what is left, a
 | Our own Semgrep taint rules for CWE-22 and CWE-79 | Bandit can't see path traversal or reflected XSS; the rules are short and explainable |
 | Training templates ≠ evaluation templates | The test measures learning the vulnerability type, not memorising templates |
 | DPO pairs = the correct fix vs the model's own failed fix | The "rejected" side is exactly the mistakes the model really makes |
+| Retries show the previous fix and the real error | v1 showed only a vague error, and the model repeated the same wrong fix in half its retries |
+| The parser strips prompt tags the model echoes | Otherwise a correct fix wrapped in `<vulnerable_code>` counts as a syntax error, which made the v1 comparison unfair to the normal models |
+| Real CVE fixes are filtered by our own scanners | CVEfixes is noisy; keeping only fixes our scanners confirm makes every real example consistent with how the pipeline judges fixes |
 | No servers, databases, queues or cloud | It's a local research prototype; infrastructure adds work but nothing to measure |
 
 ## Rules

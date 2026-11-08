@@ -3,11 +3,11 @@
 Three ways, depending on what you have:
 
   1. On the GPU machine (Linux, WSL or Colab), straight from a training run:
-       python training/export.py --run training/runs/sft --name patchai-3b
+       python training/export.py --run training/runs/v2 --name patchai-3b
      Unsloth converts the model to GGUF (4-bit, q4_k_m) and registers it with Ollama.
 
   2. If GGUF conversion fails (it compiles llama.cpp, which can be painful on Windows):
-       python training/export.py --run training/runs/sft --name patchai-3b --merged
+       python training/export.py --run training/runs/v2 --name patchai-3b --merged
      Ollama imports the merged 16-bit model itself and quantizes it to q4_K_M.
 
   3. On the demo laptop, with a .gguf file copied from the GPU machine:
@@ -72,9 +72,10 @@ def to_gguf(run: Path) -> Path:
     model, tokenizer = FastLanguageModel.from_pretrained(str(run / "lora"), max_seq_length=4096, load_in_4bit=True)
     out = run / "gguf"
     model.save_pretrained_gguf(str(out), tokenizer, quantization_method="q4_k_m")
-    files = sorted(out.rglob("*.gguf"), key=lambda f: ("q4_k_m" not in f.name.lower(), f.name))
+    # Depending on the Unsloth version the file lands in gguf/ or gguf_gguf/ (or next to them).
+    files = sorted(run.rglob("*.gguf"), key=lambda f: ("q4_k_m" not in f.name.lower(), -f.stat().st_mtime))
     if not files:
-        sys.exit(f"No .gguf file was written to {out}. Try --merged instead.")
+        sys.exit(f"No .gguf file was written under {run}. Try --merged instead.")
     return files[0].resolve()
 
 

@@ -56,16 +56,16 @@ return run_query(conn, sql, (f"%{term}%",))
 
 ## What makes it impressive
 
-- **We train our own model.** QLoRA fine-tuning of Qwen2.5-Coder 3B on about 2,500 examples, on an RTX 4060 laptop. Bonus: **DPO** trains it to avoid its own typical mistakes.
+- **We train our own model.** QLoRA fine-tuning of Qwen2.5-Coder 3B on about 2,500 examples, including **real CVE fixes from open-source projects** (CVEfixes), on an RTX 4060 laptop. Bonus: **DPO** trains it to avoid its own typical mistakes.
 - **Real RAG.** Three knowledge sources, hybrid search with reciprocal rank fusion, a cross-encoder reranker, and call-graph-aware code retrieval (functions the vulnerable code calls come first).
 - **Proof, not promises.** Every fix must pass the project's tests, a **security test that performs the real attack**, and a re-scan. That catches **fake fixes** that fool the scanner but stay exploitable.
 - **It doesn't trust the AI.** A safety guard blocks hallucinated imports, `eval`/`shell=True`, `# nosec` tricks, signature changes and oversized edits.
-- **Self-correcting.** A failed attempt's error goes back to the model, which tries again.
+- **Self-correcting.** A failed attempt's fix and its exact error (e.g. `KeyError: 'API_TOKEN'`) go back to the model, which tries again. The model is trained on such retries.
 - **Honest AI.** The model can say "cannot fix" or "this is a false alarm" instead of guessing.
 - **Explainable.** The review screen shows the diff, the explanation, every attempt, and exactly what RAG retrieved.
 - **Human in control.** Nothing touches the real project until a person clicks Approve, and every decision is logged.
 - **Private.** Runs fully offline: local models through Ollama, local embeddings, no cloud.
-- **Measured.** A validated benchmark of 63 cases compares our model against the normal 3B and the bigger 7B, with confidence intervals.
+- **Measured, and improved from the measurements.** A validated benchmark of 63 cases compares our model against the normal 3B and the bigger 7B, with confidence intervals. Reading v1's failures led to v2 (see Results).
 
 ---
 
@@ -96,7 +96,7 @@ Other ways in:
 ```powershell
 patchai scan demo_projects/vuln_shop          # list vulnerabilities
 patchai fix  demo_projects/vuln_shop          # fix one in the terminal, then approve/reject
-python -m pytest                               # 54 tests, no model or GPU needed
+python -m pytest                               # 69 tests, no model or GPU needed
 ```
 
 **VS Code extension:** open the `extension/` folder in VS Code, press **F5**, run **PatchAI: Start PatchAI Server**, then **PatchAI: Scan Workspace**. See `extension/README.md`.
@@ -114,6 +114,24 @@ python -m pytest                               # 54 tests, no model or GPU neede
 7. Click **Approve**: the fix is applied and the bug disappears from the next scan. Show the **Decisions** log.
 8. Repeat in **VS Code**: red underline → 🛡️ Fix with PatchAI → Accept.
 9. **Results** tab: the fix-rate chart (normal 3B vs ours vs 7B) and one honest limitation.
+
+---
+
+## Results so far
+
+**v1** (first trained model, 2026-11-08), 53 test cases, every model through the same full pipeline. Scored fairly with `eval/rescore.py` (see [eval/README.md](eval/README.md)):
+
+| Model | Fix rate | 95% interval | Demo shop (hand-written) | Time per fix |
+| --- | --- | --- | --- | --- |
+| Normal Qwen2.5-Coder 3B | 42% | 29–55% | 1/7 | 10s |
+| **patchai-3b v1 (ours)** | **79%** | 67–88% | 6/7 | **7s** |
+| Normal Qwen2.5-Coder 7B | 92% | 82–97% | 5/7 | 15s |
+
+- Fine-tuning **nearly doubled** the 3B model's fix rate (42% → 79%; the intervals don't overlap), and made its answers 100% readable in our format.
+- The 7B, a model twice the size, is still better overall. Ours is about twice as fast and wins on the hand-written demo shop.
+- Ours scored **0% on hard-coded secrets** and **0/4 on key derivation**. Reading the logs showed why: habits from the training data (`os.environ["X"]` crashes when the variable isn't set; a random salt makes keys change every time). Retries rarely helped, because the retry prompt showed only a vague error.
+
+**v2** fixes exactly those problems (balanced data, the missing patterns, real CVE fixes, retries that show the previous fix and the real error). It's trained and evaluated by `run_4060.sh`, and its results go to `eval/results/v2/`. Details: [training/README.md](training/README.md#v1--v2-what-we-changed-after-the-first-models-error-analysis).
 
 ---
 
@@ -138,11 +156,13 @@ patchai/                 the pipeline (one file per step)
   server.py, cli.py         local API for VS Code, command line
 app/review_app.py        Streamlit review app (Fix · Compare models · Results · Decisions)
 extension/               VS Code extension (TypeScript)
-training/                synth.py → make_dataset.py → train.py → export.py (+ dpo.py)
-eval/                    make_cases.py → run_eval.py → report.py
+training/                synth.py + real_data.py → make_dataset.py → train.py → export.py (+ dpo.py)
+eval/                    make_cases.py → run_eval.py → report.py (+ rescore.py)
+run_4060.sh              the whole GPU part in one command (see RUN_ON_4060.md)
 data/knowledge/          7 security guides (one per type)
 data/fix_examples/       35 past fixes
 data/semgrep_rules.yaml  our taint-tracking rules for path traversal and XSS
+data/real_fixes/         real CVE fixes from CVEfixes, filtered by our scanners
 demo_projects/vuln_shop/ the intentionally vulnerable demo app (+ tests + attack tests)
 tests/                   PatchAI's own tests
 ```
@@ -161,7 +181,7 @@ See [PLAN.md](PLAN.md) for the status, what is left, and who does what.
 | Proof a fix works | Planned | Tests + real attack test + re-scan on every fix |
 | Results | Nothing to measure | Validated benchmark, fix rates with confidence intervals |
 | Demo | API documentation | Review app + VS Code extension |
-| Status | Skeleton that didn't run end to end | Runs end to end, 54 passing tests |
+| Status | Skeleton that didn't run end to end | Runs end to end, 69 passing tests, trained and evaluated |
 
 The old design was built like a hosted product. PatchAI is a local research prototype, so servers and deployment tools added work without adding anything to demonstrate or measure. **Kept:** the scanners, the safety guard, testing fixes on a copy of the code, and human approval.
 

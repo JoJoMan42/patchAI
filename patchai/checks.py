@@ -44,7 +44,10 @@ def patched_copy(project_dir: str | Path, file_path: str, new_text: str) -> Iter
 
 
 def failing_tests(project_dir: str | Path) -> tuple[set[str], str]:
-    """Run the project's normal tests. Returns (ids of failing tests, short summary)."""
+    """Run the project's normal tests. Returns (ids of failing tests, short summary).
+
+    The summary includes the first error lines (e.g. "KeyError: 'API_TOKEN'"), so a failed
+    attempt tells the model exactly what went wrong."""
     project_dir = Path(project_dir)
     target = ["tests"] if (project_dir / "tests").is_dir() else ["."]
     ignore = [f"--ignore={d}" for d in SKIP_DIRS if d != "tests" and (project_dir / d).exists()]
@@ -52,7 +55,7 @@ def failing_tests(project_dir: str | Path) -> tuple[set[str], str]:
     if code == 5:  # pytest: no tests collected
         return set(), "no tests found"
     if code not in (0, 1):
-        return {"<test run error>"}, summary
+        return {"<the tests could not even start>"}, summary
     return failed, summary
 
 
@@ -87,8 +90,9 @@ def run_security_test(copy_dir: Path, finding: Finding) -> CheckResult:
     code, failed, summary = _pytest(copy_dir, [str(f.relative_to(copy_dir)) for f in files])
     if code == 0:
         return CheckResult(name="security_test", passed=True, details=f"The attack no longer works. {summary}")
+    names = ", ".join(sorted(name.split("::")[-1] for name in failed)[:3])
     return CheckResult(name="security_test", passed=False,
-                       details=f"The vulnerability can still be exploited: {', '.join(sorted(failed)[:3]) or summary}.")
+                       details=f"The vulnerability can still be exploited ({names or 'security test failed'}). {summary}")
 
 
 def rescan(copy_dir: Path, finding: Finding, patched: PatchedFile, findings_before: list[Finding]) -> CheckResult:
@@ -133,7 +137,24 @@ def _pytest(project_dir: Path, args: list[str]) -> tuple[int, set[str], str]:
         failed = _failed_from_junit(report) if report.exists() else set()
         lines = [line for line in proc.stdout.strip().splitlines() if line.strip()]
         summary = lines[-1].strip("= ") if lines else ""
+        if proc.returncode != 0:
+            error = error_lines(proc.stdout)
+            summary = f"{summary}. Error: {error}" if error else summary
         return proc.returncode, failed, summary
+
+
+def error_lines(pytest_output: str, limit: int = 2) -> str:
+    """The first distinct error lines pytest printed, e.g. "KeyError: 'API_TOKEN'" or
+    "AssertionError: assert '<script>' not in page"."""
+    found: list[str] = []
+    for line in pytest_output.splitlines():
+        if line.startswith("E   "):
+            text = line[4:].strip()
+            if text and not text.startswith(("+", "-", "?", "where ", "and ")) and text not in found:
+                found.append(text[:200])
+        if len(found) >= limit:
+            break
+    return " | ".join(found)
 
 
 def _failed_from_junit(report: Path) -> set[str]:
