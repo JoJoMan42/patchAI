@@ -40,3 +40,4 @@ data/real_fixes/cache/
 
 # Downloaded delivery folders and model files (never commit: 2 GB)
 PatchAI_Final_Delivery*/
+training/runs/*/.cache/
