@@ -12,7 +12,7 @@ from patchai.llm import LLMReply
 from patchai.models import Finding, FixResult
 from patchai.pipeline import fix_finding
 from patchai.rag_index import build_index, chunk_code, chunk_guides, chunk_past_fixes, code_collection
-from patchai.rag_search import retrieve, search
+from patchai.rag_search import rank, retrieve, search
 
 
 def test_knowledge_files_are_chunked():
@@ -38,6 +38,22 @@ def test_hybrid_search_finds_the_right_guide(shop):
 
     results = search(knowledge_collections()["guide"], "guide", "parameterized query placeholder sqlite3 execute", 3)
     assert results and results[0].title.startswith("CWE-89")
+
+
+def test_rank_exposes_every_stage_and_search_uses_it(shop):
+    """search() is rank()[:k]; a row shows its place in each ranking stage."""
+    from patchai.rag_index import knowledge_collections
+
+    guide = knowledge_collections()["guide"]
+    query = "parameterized query placeholder sqlite3 execute"
+    rows = rank(guide, query)
+    assert rows and all(rows[i]["score"] >= rows[i + 1]["score"] for i in range(len(rows) - 1))
+    assert any(r["meaning_rank"] is not None and r["keyword_rank"] is not None for r in rows)
+    results = search(guide, "guide", query, 3)
+    # Pasted from the code before the rank/search split (hash embedder, no reranker):
+    assert results[0].title == "CWE-89: SQL Injection: How to fix it in Python"
+    assert [r.title for r in results] == [guide.chunks[row["index"]]["title"] for row in rows[:3]]
+    assert [r.score for r in results] == [round(float(row["score"]), 3) for row in rows[:3]]
 
 
 def test_retrieve_returns_guides_code_and_past_fixes_of_the_same_type(shop, shop_findings):

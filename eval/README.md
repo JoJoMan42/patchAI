@@ -41,7 +41,20 @@ The run can be stopped and restarted at any time: finished cases are skipped. Ex
 | --- | --- |
 | `v1` | The first experiment (2026-11-08): normal 3B, patchai-3b v1, normal 7B. **Scored with the old parser**, which counted fixes wrapped in `<vulnerable_code>` tags as syntax errors; that hurt the normal models (the 7B lost 11 cases this way). Kept as the record of what happened. |
 | `v1_rescored` | The same recorded answers, re-checked with the fixed parser and checks (`python eval/rescore.py --run v1`, no model needed). **The fair v1 numbers.** |
-| `v2` | After the v1 error analysis: improved training data (+ real CVE fixes), retry prompts that show the previous fix and the real error. Made by `run_4060.sh`. |
+| `v2` | After the v1 error analysis: improved training data (+ real CVE fixes), retry prompts that show the previous fix and the real error. Made by `run_4060.sh` on 2026-11-09. **Four models in one run: the main result.** |
+
+**Naming trap:** the Ollama name `patchai-3b` means **v1** in runs `v1` and `v1_rescored`, and **v2** in run `v2` (where v1 is called `patchai-3b-v1`). `patchai.metrics.canonical_model()` resolves this; the app, the charts and `results.md` show the resolved labels.
+
+### Run `v2` (53 test cases)
+
+| Model | Fix rate | 95% interval | Demo shop | First try | Fake fixes | Guard blocks | Avg time |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Qwen2.5-Coder 3B (base) | 49% (26/53) | 36–62% | 4/7 | 38% | 23% | 15% | 9.1 s |
+| PatchAI-3B v1 (ours) | 72% (38/53) | 58–82% | 6/7 | 72% | 13% | 4% | 6.5 s |
+| **PatchAI-3B v2 (ours)** | **87% (46/53)** | 75–93% | 6/7 | 87% | 6% | 0% | 6.2 s |
+| Qwen2.5-Coder 7B (base) | 91% (48/53) | 80–96% | 5/7 | 91% | 4% | 14% | 20.1 s |
+
+Read it honestly: the intervals of v2 and the 7B overlap; the same v1 model scored 79% in `v1_rescored` and 72% here (about ±7 points of run-to-run noise), so compare models **inside one run**; retries rescued no case for v1, v2 or the 7B in this run.
 
 `eval/rescore.py` replays a run's recorded model answers through today's pipeline. When the first answer passes, the result is exact; when it still fails, the model's next recorded answer (written after the old retry prompt) is replayed as it was.
 

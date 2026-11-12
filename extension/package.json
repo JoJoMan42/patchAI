@@ -3,7 +3,19 @@
   "displayName": "PatchAI – AI Security Fixes",
   "description": "Finds security vulnerabilities in Python code and fixes them with the PatchAI model, with checks and human approval.",
   "publisher": "patchai-team",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JoJoMan42/patchAI"
+  },
+  "icon": "media/icon.png",
+  "keywords": [
+    "security",
+    "python",
+    "vulnerability",
+    "ai",
+    "fix"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -13,14 +25,16 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "workspaceContains:**/*.py"
   ],
   "contributes": {
     "commands": [
       {
         "command": "patchai.scan",
         "title": "Scan Workspace for Vulnerabilities",
-        "category": "PatchAI"
+        "category": "PatchAI",
+        "icon": "$(search)"
       },
       {
         "command": "patchai.fix",
@@ -28,14 +42,65 @@
         "category": "PatchAI"
       },
       {
-        "command": "patchai.startServer",
-        "title": "Start PatchAI Server",
+        "command": "patchai.selectModel",
+        "title": "Select Model",
+        "category": "PatchAI",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "patchai.checkSetup",
+        "title": "Check Setup",
+        "category": "PatchAI",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "patchai.openDemo",
+        "title": "Open Demo Project",
         "category": "PatchAI"
       },
       {
-        "command": "patchai.selectModel",
-        "title": "Select Model",
+        "command": "patchai.startServer",
+        "title": "Start Server",
         "category": "PatchAI"
+      },
+      {
+        "command": "patchai.stopServer",
+        "title": "Stop Server",
+        "category": "PatchAI"
+      },
+      {
+        "command": "patchai.showServerLog",
+        "title": "Show Server Log",
+        "category": "PatchAI"
+      },
+      {
+        "command": "patchai.setFolder",
+        "title": "Set PatchAI Folder",
+        "category": "PatchAI"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "patchai",
+          "title": "PatchAI",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "patchai": [
+        {
+          "id": "patchai.findings",
+          "name": "Findings",
+          "icon": "media/shield.svg"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "patchai.findings",
+        "contents": "PatchAI finds security holes in Python code and fixes them with a locally running, fine-tuned model. Every fix is proven by tests, a real attack and a re-scan before you apply it.\n[Scan Workspace](command:patchai.scan)\n[Open Demo Project](command:patchai.openDemo)\n[Check Setup](command:patchai.checkSetup)"
       }
     ],
     "menus": {
@@ -51,8 +116,66 @@
           "when": "editorLangId == python",
           "group": "patchai"
         }
+      ],
+      "view/title": [
+        {
+          "command": "patchai.scan",
+          "when": "view == patchai.findings",
+          "group": "navigation@1"
+        },
+        {
+          "command": "patchai.selectModel",
+          "when": "view == patchai.findings",
+          "group": "navigation@2"
+        },
+        {
+          "command": "patchai.checkSetup",
+          "when": "view == patchai.findings",
+          "group": "navigation@3"
+        }
       ]
     },
+    "walkthroughs": [
+      {
+        "id": "patchai.gettingStarted",
+        "title": "Get started with PatchAI",
+        "description": "Scan, fix and review your first vulnerability in about five minutes.",
+        "steps": [
+          {
+            "id": "patchai.step.setup",
+            "title": "Check the setup",
+            "description": "PatchAI needs its local server, Ollama and the scanners.\n[Check Setup](command:patchai.checkSetup)",
+            "media": {
+              "markdown": "media/walkthrough/setup.md"
+            }
+          },
+          {
+            "id": "patchai.step.demo",
+            "title": "Open the demo project",
+            "description": "A small, deliberately vulnerable online shop, on a safe copy.\n[Open Demo Project](command:patchai.openDemo)",
+            "media": {
+              "markdown": "media/walkthrough/demo.md"
+            }
+          },
+          {
+            "id": "patchai.step.scan",
+            "title": "Scan and read a finding",
+            "description": "Findings show up as underlines, in the Problems panel and in the PatchAI side bar.\n[Scan Workspace](command:patchai.scan)",
+            "media": {
+              "markdown": "media/walkthrough/scan.md"
+            }
+          },
+          {
+            "id": "patchai.step.fix",
+            "title": "Fix it and review the evidence",
+            "description": "One click runs the whole pipeline. Accept only what you have seen proven.\n[Fix with AI](command:patchai.fix)",
+            "media": {
+              "markdown": "media/walkthrough/fix.md"
+            }
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "PatchAI",
       "properties": {
@@ -69,28 +192,42 @@
         "patchai.pythonPath": {
           "type": "string",
           "default": "",
-          "description": "Python interpreter used by 'PatchAI: Start PatchAI Server'. Leave empty to use the repository's .venv (or 'python' if there is none). A relative path (for example .venv/Scripts/python.exe) is resolved against the server folder."
+          "description": "Python interpreter used to start the PatchAI server. Leave empty to use the PatchAI folder's .venv (or plain 'python' if there is none). A relative path (for example .venv/Scripts/python.exe) is resolved against the PatchAI folder."
         },
         "patchai.serverDir": {
           "type": "string",
           "default": "",
-          "description": "Folder the server is started in (the PatchAI repository root). Leave empty to use the folder that contains this extension."
+          "description": "The PatchAI folder (the repository root with config.yaml). Leave empty to find it automatically."
         },
         "patchai.scanOnSave": {
           "type": "boolean",
-          "default": false,
-          "description": "Scan the workspace again after a Python file is saved."
+          "default": true,
+          "description": "Scan the workspace again after a Python file is saved (quietly: no popups)."
+        },
+        "patchai.scanOnOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Scan the workspace when a folder with Python files is opened."
+        },
+        "patchai.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the PatchAI server automatically when it is not running."
         }
       }
     }
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test test/*.test.js",
+    "vscode:prepublish": "npm run compile",
+    "package": "vsce package --no-dependencies --skip-license --out patchai.vsix"
   },
   "devDependencies": {
     "@types/node": "20.x",
     "@types/vscode": "~1.85.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.9.3"
   }
 }

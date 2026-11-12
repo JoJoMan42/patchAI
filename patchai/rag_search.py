@@ -65,11 +65,16 @@ def related_code(collection: Collection, context: CodeContext, k: int) -> list[R
     return called + others[: k - len(called)]
 
 
-def search(collection: Collection, source: str, query: str, k: int,
-           where: Callable[[dict], bool] | None = None, rerank: bool = True) -> list[RetrievedChunk]:
-    """Hybrid search: embeddings + BM25, merged with reciprocal rank fusion, then reranked."""
+def rank(collection: Collection, query: str,
+         where: Callable[[dict], bool] | None = None, rerank: bool = True) -> list[dict]:
+    """Every candidate with its place in each ranking stage, best first.
+
+    Each row: {"index": chunk index, "meaning_rank": 1-based place in the embedding
+    search or None, "keyword_rank": same for BM25, "fused": the fusion score,
+    "score": the final (reranker) score}.
+    """
     allowed = [i for i, c in enumerate(collection.chunks) if where is None or where(c)]
-    if not allowed or k <= 0:
+    if not allowed:
         return []
     n = get_config()["rag"]["candidates"]
 
@@ -85,8 +90,8 @@ def search(collection: Collection, source: str, query: str, k: int,
     # 3. Reciprocal rank fusion: documents ranked high by either method rise to the top.
     fused: dict[int, float] = {}
     for ranking in (by_meaning, by_keyword):
-        for rank, i in enumerate(ranking):
-            fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + rank + 1)
+        for place, i in enumerate(ranking):
+            fused[i] = fused.get(i, 0.0) + 1.0 / (RRF_K + place + 1)
     candidates = sorted(fused, key=lambda i: -fused[i])[:n]
 
     # 4. Rerank the candidates with a cross-encoder, which reads query and chunk together.
@@ -98,8 +103,21 @@ def search(collection: Collection, source: str, query: str, k: int,
     else:
         best = max(fused.values())
         scores = {i: fused[i] / best for i in candidates}
-    ranked = sorted(candidates, key=lambda i: -scores[i])[:k]
-    return [_to_result(collection.chunks[i], source, scores[i]) for i in ranked]
+
+    meaning_place = {i: p + 1 for p, i in enumerate(by_meaning)}
+    keyword_place = {i: p + 1 for p, i in enumerate(by_keyword)}
+    return [{"index": i, "meaning_rank": meaning_place.get(i), "keyword_rank": keyword_place.get(i),
+             "fused": fused[i], "score": scores[i]}
+            for i in sorted(candidates, key=lambda i: -scores[i])]
+
+
+def search(collection: Collection, source: str, query: str, k: int,
+           where: Callable[[dict], bool] | None = None, rerank: bool = True) -> list[RetrievedChunk]:
+    """Hybrid search: embeddings + BM25, merged with reciprocal rank fusion, then reranked."""
+    if k <= 0:
+        return []
+    rows = rank(collection, query, where=where, rerank=rerank)
+    return [_to_result(collection.chunks[r["index"]], source, r["score"]) for r in rows[:k]]
 
 
 def _to_result(chunk: dict, source: str, score: float) -> RetrievedChunk:

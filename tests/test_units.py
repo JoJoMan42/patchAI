@@ -165,12 +165,66 @@ def test_prompt_wraps_untrusted_text(project):
     assert '<reference kind="Security guide"' in user and "<error>\ntests failed\n</error>" in user
 
 
+# ---- model status ----
+
+def test_model_status_without_ollama(monkeypatch):
+    from patchai import llm
+
+    monkeypatch.setattr(llm, "list_models", lambda: [])
+    status = llm.model_status()
+    assert status["ollama"] is False and status["default"] is None and "Ollama" in status["problem"]
+
+
+def test_model_status_with_only_the_base_model(monkeypatch):
+    from patchai import llm
+
+    monkeypatch.setattr(llm, "list_models", lambda: ["qwen2.5-coder:3b"])
+    status = llm.model_status()
+    assert status["ollama"] and status["default"] == "qwen2.5-coder:3b"
+    assert status["fine_tuned"] is False and "patchai-3b" in status["problem"]
+
+
+def test_model_status_with_the_fine_tuned_model(monkeypatch):
+    from patchai import llm
+
+    monkeypatch.setattr(llm, "list_models", lambda: ["patchai-3b", "qwen2.5-coder:3b"])
+    status = llm.model_status()
+    assert status["default"] == "patchai-3b" and status["fine_tuned"] and status["problem"] is None
+
+
 # ---- metrics ----
 
 def test_wilson_interval():
     low, high = metrics.wilson_interval(7, 10)
     assert 0.39 < low < 0.40 and 0.89 < high < 0.90
     assert metrics.wilson_interval(0, 0) == (0.0, 0.0)
+
+
+def test_canonical_model_depends_on_the_run():
+    assert metrics.canonical_model("patchai-3b", "v1") == "patchai-3b-v1"
+    assert metrics.canonical_model("patchai-3b", "v1_rescored") == "patchai-3b-v1"
+    assert metrics.canonical_model("patchai-3b", "v2") == "patchai-3b"
+    assert metrics.canonical_model("patchai-3b-v1", "v2") == "patchai-3b-v1"
+    assert metrics.canonical_model("qwen2.5-coder:7b", "v1") == "qwen2.5-coder:7b"
+    assert metrics.canonical_model("patchai-3b [no RAG]", "v1") == "patchai-3b-v1 [no RAG]"
+
+
+def test_model_labels_and_colors():
+    assert metrics.model_label("patchai-3b", "v2") == "PatchAI-3B v2 (ours)"
+    assert metrics.model_label("patchai-3b", "v1_rescored") == "PatchAI-3B v1 (ours)"
+    assert metrics.model_label("patchai-3b [no RAG]", "v2") == "PatchAI-3B v2 (ours) [no RAG]"
+    assert metrics.model_label("mystery-model") == "mystery-model"
+    assert metrics.model_color("patchai-3b", "v2") == "#2a78d6"
+    assert metrics.model_color("patchai-3b", "v1") == "#c9418f"
+    assert metrics.model_color("mystery-model") == "#8a8984"
+
+
+def test_model_order():
+    models = ["qwen2.5-coder:7b", "zz-unknown", "patchai-3b", "qwen2.5-coder:3b", "aa-unknown"]
+    assert metrics.model_order(models, "v2") == [
+        "qwen2.5-coder:3b", "patchai-3b", "qwen2.5-coder:7b", "aa-unknown", "zz-unknown"]
+    # In a v1 run, patchai-3b is v1 and sorts into v1's slot.
+    assert metrics.model_order(["patchai-3b", "qwen2.5-coder:3b"], "v1") == ["qwen2.5-coder:3b", "patchai-3b"]
 
 
 def test_summary():

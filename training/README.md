@@ -27,7 +27,7 @@ bash run_4060.sh            # everything: checks, dataset, training, export, eva
 bash run_4060.sh --dpo      # the same plus the DPO bonus (~3-4 h more)
 ```
 
-The script skips finished steps, so it can be stopped and re-run. It keeps the first model as `patchai-3b-v1` so the evaluation can compare v1 and v2. See [RUN_ON_4060.md](../RUN_ON_4060.md).
+The script skips finished steps, so it can be stopped and re-run. It keeps the first model as `patchai-3b-v1` so the evaluation can compare v1 and v2. See [RUN_ON_4060.md](../docs/RUN_ON_4060.md).
 
 First-time setup of the laptop (only once): WSL2 + Ubuntu, then
 
@@ -67,6 +67,25 @@ v1 (trained 2026-11-08) reached 79% on the benchmark, but reading its failures s
 | Synthetic data only | | Real CVE fixes from CVEfixes added |
 
 The prompt changed (retries), so `PROMPT_VERSION` is now `v2`. First attempts are unchanged, so the v1 model still works with it.
+
+## v2 results and what still fails
+
+v2 was trained on 2026-11-09 (2,289 train / 252 validation examples, 117 minutes, final validation loss 0.0303 against v1's 0.0342) and evaluated in run `v2` next to v1 and both base models on the same 53 test cases:
+
+| Model | Fix rate | 95% interval | Hard-coded secret | Weak crypto | Demo shop | Avg time |
+| --- | --- | --- | --- | --- | --- | --- |
+| Qwen2.5-Coder 3B (base) | 49% | 36–62% | 57% | 44% | 4/7 | 9.1 s |
+| PatchAI-3B v1 | 72% | 58–82% | 0% | 56% | 6/7 | 6.5 s |
+| **PatchAI-3B v2** | **87%** | 75–93% | **57%** | **100%** | 6/7 | 6.2 s |
+| Qwen2.5-Coder 7B (base) | 91% | 80–96% | 71% | 100% | 5/7 | 20.1 s |
+
+The two problems the v1 analysis targeted are fixed (secrets 0% → 57%, crypto 56% → 100%), command injection went from 71% to 100%, and no v2 attempt was blocked by the safety guard. v2's seven failures:
+
+- **Path traversal, `path_fstring` (3 cases):** the project tests and the attack test **passed**; only the re-scan failed. We checked our Semgrep rule (`data/semgrep_rules.yaml`, `path-traversal-open`): it treats the f-string that contains the parameter as the tainted value, so a fix that cleans the parameter first (`name = os.path.basename(name)`) and then builds the same f-string is **still reported**, although `basename` removes `../` and the attack fails. These are probably correct fixes rejected by our own rule. Confirming that v2's answers had this shape needs the full logs (`eval/results/v2/full/patchai-3b/cwe22_path_fstring_*.json`). The rule was **not** changed after seeing the results; changing it would mean re-scoring every model and saying so.
+- **Hard-coded secret, `secret_compare` (3 cases):** the last attempt broke the project tests, and at least one attempt was a *fake fix* (the scanner stopped flagging it while the attack still worked). Credential checks remain the hardest secret pattern.
+- **Demo shop XSS (`shop_cwe79`, 1 case):** the project tests failed on all three attempts.
+
+**Retries:** in run `v2`, retries rescued no case for v1, v2 or the 7B (first-try rate equals fix rate); only the base 3B gained from them (6 cases).
 
 ## Real-world data (CVEfixes)
 

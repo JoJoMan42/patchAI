@@ -1,6 +1,6 @@
 # PatchAI: status and plan
 
-Read [README.md](README.md) first. This file says what is built, what is left, and who does what.
+Read [README.md](../README.md) first. This file says what is built, what is left, and who does what.
 
 ## Status
 
@@ -12,24 +12,26 @@ Read [README.md](README.md) first. This file says what is built, what is left, a
 | Prompt, model client, fix-and-retry loop | ✅ Done, tested with a scripted model | `patchai/prompts.py`, `llm.py`, `fixer.py` |
 | Safety guard, tests, attack test, re-scan | ✅ Done, tested | `patchai/guard.py`, `checks.py` |
 | Human review + decisions log | ✅ Done, tested | `patchai/review.py` |
-| Review app (Streamlit) | ✅ Built | `app/review_app.py` |
-| VS Code extension + local server | ✅ Built, compiles, server tested | `extension/`, `patchai/server.py` |
+| Review app (Streamlit): eight pages, replay fallback without Ollama | ✅ Done (2026-11-11), tested headless | `app/review_app.py`, `app/views/` |
+| VS Code extension + local server: self-starting server, side bar, live progress, safe Accept with Undo | ✅ Done (2026-11-11), `.vsix` builds and installs | `extension/`, `patchai/server.py` |
 | Demo shop (7 vulnerabilities, tests, attack tests) | ✅ Done | `demo_projects/vuln_shop/` |
+| Safe demo copy (demos never edit the tracked shop) | ✅ Done (2026-11-10) | `patchai/demo.py` |
 | Training data generator + dataset builder | ✅ v2: balanced, realistic retry examples, + 21 real CVE fixes | `training/synth.py`, `make_dataset.py`, `real_data.py` |
 | SFT training, export, DPO scripts | ✅ Run on the 4060 (v1); one-command runner for v2 | `training/`, `run_4060.sh` |
 | Benchmark (validated cases) | ✅ Generated | `eval/cases/` |
 | Evaluation runner + charts + re-scoring | ✅ Done | `eval/run_eval.py`, `report.py`, `rescore.py` |
 | **Model v1** trained and evaluated | ✅ Done (2026-11-08) | `training/runs/v1/`, `eval/results/v1*/` |
-| **Model v2** (after v1 error analysis) | ⬜ To do: `bash run_4060.sh` on the 4060 | see [RUN_ON_4060.md](RUN_ON_4060.md) |
-| **Report, slides, demo rehearsal** | ⬜ To do | |
+| **Model v2** (after v1 error analysis) | ✅ Done (2026-11-09): 87% vs v1 72% in the same run | `training/runs/v2/`, `eval/results/v2/`, [RUN_ON_4060.md](RUN_ON_4060.md) |
+| **Report** (figures and v2 results) | ✅ Built (2026-11-11); team names, personal sections and two screenshots still to fill in | `report/` |
+| **Slides, demo rehearsal** | ⬜ To do | [DEMO.md](DEMO.md) |
 
 ## What is left, in order
 
-1. **4060 laptop (one evening):** `git pull`, then `bash run_4060.sh` ([RUN_ON_4060.md](RUN_ON_4060.md)). It builds the v2 data, trains, exports, and runs the full comparison (normal 3B, v1, v2, normal 7B). Optional: `--dpo`.
-2. **Push the results** (the script prints the git commands), and put the `.gguf` and the full logs on Google Drive.
-3. **Demo laptop:** install Ollama, `python training/export.py --gguf <file> --name patchai-3b`, rehearse the demo in the README.
-4. **Report and slides (now, in parallel):** method from the READMEs, results from `eval/results/v1_rescored/` and later `v2/`, loss curves from `training/runs/v1|v2/loss.png`, the v1 → v2 error analysis from `training/README.md`.
-5. **Rehearse the demo 2–3 times** and record a backup video.
+1. **Demo laptop:** install Ollama, pull the base models, register the v2 `.gguf` from the Drive as `patchai-3b` and the v1 `.gguf` as `patchai-3b-v1` (`python training/export.py --gguf <file> --name <name>`), then `patchai doctor --warm`.
+2. **Full logs:** extract `v2_full_eval_logs.zip` into `eval/results/v2/full/` (the case explorer and the replay fallback use it), and commit it.
+3. **Report:** fill in the yellow placeholders (team names, personal contributions, two screenshots), then `npm run build` in `report/`.
+4. **Slides:** results from `eval/results/v2/results.md`, figures from `report/fig/`.
+5. **Rehearse the demo 2–3 times** with [DEMO.md](DEMO.md) and record a backup video.
 
 ## Team split
 
@@ -63,4 +65,4 @@ Read [README.md](README.md) first. This file says what is built, what is left, a
 
 ## Rules
 
-See [AGENTS.md](AGENTS.md) (for people and AI coding tools alike).
+See [AGENTS.md](../AGENTS.md) (for people and AI coding tools alike).

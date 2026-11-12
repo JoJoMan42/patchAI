@@ -49,6 +49,61 @@ def to_record(result: FixResult, case_id: str) -> dict:
     }
 
 
+MODEL_INFO: dict[str, tuple[str, str]] = {  # canonical id -> (label, colour), in display order
+    "qwen2.5-coder:3b": ("Qwen2.5-Coder 3B (base)", "#eb6834"),
+    "patchai-3b-v1": ("PatchAI-3B v1 (ours)", "#c9418f"),
+    "patchai-3b": ("PatchAI-3B v2 (ours)", "#2a78d6"),
+    "patchai-3b-dpo": ("PatchAI-3B v2 + DPO (ours)", "#eda100"),
+    "qwen2.5-coder:7b": ("Qwen2.5-Coder 7B (base)", "#1baf7a"),
+}
+
+_UNKNOWN_COLOR = "#8a8984"
+_NO_RAG = " [no RAG]"
+
+
+def _split_suffix(model: str) -> tuple[str, str]:
+    """Split off the ' [no RAG]' suffix that eval/run_eval.py --no-rag appends."""
+    if model.endswith(_NO_RAG):
+        return model[: -len(_NO_RAG)], _NO_RAG
+    return model, ""
+
+
+def canonical_model(model: str, run: str = "") -> str:
+    """The one id a model is known by everywhere.
+
+    The raw name `patchai-3b` means v1 in runs whose name starts with `v1`
+    (v2 did not exist yet) and v2 everywhere else.
+    """
+    base, suffix = _split_suffix(model)
+    if base == "patchai-3b" and run.startswith("v1"):
+        base = "patchai-3b-v1"
+    return base + suffix
+
+
+def model_label(model: str, run: str = "") -> str:
+    """The label charts and tables show. Unknown models keep their own name."""
+    base, suffix = _split_suffix(canonical_model(model, run))
+    label = MODEL_INFO.get(base, (base,))[0]
+    return label + suffix
+
+
+def model_color(model: str, run: str = "") -> str:
+    """The one colour a model has in every chart. Unknown models are grey."""
+    base, _ = _split_suffix(canonical_model(model, run))
+    return MODEL_INFO.get(base, ("", _UNKNOWN_COLOR))[1]
+
+
+def model_order(models: list[str], run: str = "") -> list[str]:
+    """The given names sorted into display order (MODEL_INFO order, unknown ones last by name)."""
+    known = list(MODEL_INFO)
+
+    def key(model: str) -> tuple[int, str]:
+        base, _ = _split_suffix(canonical_model(model, run))
+        return (known.index(base), "") if base in known else (len(known), base)
+
+    return sorted(models, key=key)
+
+
 def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """95% confidence interval for a proportion. Better than ±1.96·SE for small samples."""
     if n == 0:

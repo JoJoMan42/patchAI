@@ -13,6 +13,7 @@ os.environ["PATCHAI_EMBEDDER"] = "hash"
 os.environ["PATCHAI_RERANKER"] = "off"
 os.environ["PATCHAI_INDEX"] = str(_TMP / "index")
 os.environ["PATCHAI_DECISIONS"] = str(_TMP / "decisions.jsonl")
+os.environ["PATCHAI_DEMO_WORKSPACE"] = str(_TMP / "demo_workspace")
 
 ROOT = Path(__file__).resolve().parent.parent
 SHOP = ROOT / "demo_projects" / "vuln_shop"

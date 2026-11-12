@@ -9,6 +9,9 @@ pyyaml>=6.0
 # Vulnerability scanners
 bandit>=1.7.9
 # semgrep is optional (adds path-traversal and XSS rules). Install with:  pip install semgrep
+# semgrep 1.x needs opentelemetry-api ~=1.37; without this pin, installing fastapi
+# upgrades it and semgrep stops starting.
+opentelemetry-api~=1.37.0
 
 # RAG: keyword search, vector math, embeddings + reranker (ONNX, no PyTorch needed)
 rank-bm25>=0.2.2
@@ -19,7 +22,7 @@ fastembed>=0.4
 ollama>=0.4
 
 # Interfaces
-streamlit>=1.35
+streamlit>=1.49
 fastapi>=0.110
 uvicorn>=0.29
 typer>=0.12

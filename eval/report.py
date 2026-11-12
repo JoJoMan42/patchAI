@@ -41,10 +41,16 @@ FAILURE_LABELS = {"format": "Unreadable answer", "guard": "Blocked by guard", "t
                   "cannot_fix": "Model gave up"}
 
 
-def model_colors(models: list[str]) -> dict[str, str]:
+def model_colors(models: list[str], run: str = "") -> dict[str, str]:
     """Colour follows the model, never its rank: the same model gets the same colour in every chart."""
-    order = sorted(models, key=lambda m: (not m.startswith("patchai"), m))
-    return {m: SERIES[i % len(SERIES)] for i, m in enumerate(order)}
+    spare = [c for c in SERIES if c not in {metrics.model_color(m, run) for m in models}]
+    colors: dict[str, str] = {}
+    for m in metrics.model_order(models, run):
+        colour = metrics.model_color(m, run)
+        if colour == "#8a8984" and spare:  # unknown model: take the next unused palette colour
+            colour = spare.pop(0)
+        colors[m] = colour
+    return colors
 
 
 def style(ax, title: str, ylabel: str = "") -> None:
@@ -65,14 +71,17 @@ def percent_axis(ax) -> None:
     ax.set_yticklabels(["0%", "25%", "50%", "75%", "100%"])
 
 
-def chart_fix_rate(summary: dict, colors: dict, out: Path) -> None:
+def chart_fix_rate(summary: dict, colors: dict, labels: dict, out: Path) -> None:
     models = list(colors)
+    names = [labels[m] for m in models]
     fig, ax = plt.subplots(figsize=(max(7, 1.9 * len(models)), 4.2), facecolor=SURFACE)
     rates = [summary[m]["fix_rate"] for m in models]
     low = [summary[m]["fix_rate"] - summary[m]["fix_rate_low"] for m in models]
     high = [summary[m]["fix_rate_high"] - summary[m]["fix_rate"] for m in models]
-    ax.bar(models, rates, width=0.5, color=[colors[m] for m in models], edgecolor=SURFACE, linewidth=2)
-    ax.errorbar(models, rates, yerr=[low, high], fmt="none", ecolor=INK_2, elinewidth=1.2, capsize=5)
+    ax.bar(names, rates, width=0.5, color=[colors[m] for m in models], edgecolor=SURFACE, linewidth=2)
+    ax.errorbar(names, rates, yerr=[low, high], fmt="none", ecolor=INK_2, elinewidth=1.2, capsize=5)
+    ax.set_xticks(range(len(names)))
+    ax.set_xticklabels([textwrap.fill(n, 16, break_long_words=False) for n in names], fontsize=9)
     for i, m in enumerate(models):
         ax.text(i, summary[m]["fix_rate_high"] + 0.03, f"{rates[i]:.0%}", ha="center", color=INK, fontsize=11, fontweight="bold")
     style(ax, "Vulnerabilities truly fixed", "fix rate")
@@ -86,7 +95,7 @@ def chart_fix_rate(summary: dict, colors: dict, out: Path) -> None:
     plt.close(fig)
 
 
-def chart_by_cwe(by_cwe: dict, colors: dict, out: Path) -> None:
+def chart_by_cwe(by_cwe: dict, colors: dict, labels: dict, out: Path) -> None:
     models = list(colors)
     cwes = sorted({c for m in models for c in by_cwe.get(m, {})}, key=lambda c: int(c.split("-")[1]))
     width = 0.8 / len(models)
@@ -94,7 +103,7 @@ def chart_by_cwe(by_cwe: dict, colors: dict, out: Path) -> None:
     for i, m in enumerate(models):
         xs = [x + (i - (len(models) - 1) / 2) * width for x in range(len(cwes))]
         ys = [by_cwe.get(m, {}).get(c, 0) for c in cwes]
-        ax.bar(xs, ys, width=width, color=colors[m], edgecolor=SURFACE, linewidth=2, label=m)
+        ax.bar(xs, ys, width=width, color=colors[m], edgecolor=SURFACE, linewidth=2, label=labels[m])
         for x, y in zip(xs, ys):
             ax.text(x, y + 0.02, f"{y:.0%}", ha="center", fontsize=7, color=INK_2)
     ax.set_xticks(range(len(cwes)))
@@ -108,7 +117,7 @@ def chart_by_cwe(by_cwe: dict, colors: dict, out: Path) -> None:
     plt.close(fig)
 
 
-def chart_quality(summary: dict, colors: dict, out: Path) -> None:
+def chart_quality(summary: dict, colors: dict, labels: dict, out: Path) -> None:
     measures = [("format_error_rate", "Unreadable answers\n(per attempt)"),
                 ("guard_rejection_rate", "Blocked by safety guard\n(per attempt)"),
                 ("fake_fix_rate", "Fake fixes: scanner fooled,\nattack still works (per case)")]
@@ -120,7 +129,8 @@ def chart_quality(summary: dict, colors: dict, out: Path) -> None:
         for i, v in enumerate(values):
             ax.text(i, v + 0.02, f"{v:.0%}", ha="center", fontsize=9, color=INK)
         ax.set_xticks(range(len(models)))
-        ax.set_xticklabels(models, rotation=20, ha="right", fontsize=8)
+        ax.set_xticklabels([textwrap.fill(labels[m], 14, break_long_words=False) for m in models],
+                           rotation=20, ha="right", fontsize=8)
         style(ax, title)
         ax.title.set_fontsize(10)
         percent_axis(ax)
@@ -130,10 +140,11 @@ def chart_quality(summary: dict, colors: dict, out: Path) -> None:
     plt.close(fig)
 
 
-def chart_failures(reasons: dict, colors: dict, out: Path) -> None:
+def chart_failures(reasons: dict, colors: dict, labels: dict, out: Path) -> None:
     models = [m for m in colors if m in reasons]
     if not models:
         return
+    names = [textwrap.fill(labels[m], 18, break_long_words=False) for m in models]
     fig, ax = plt.subplots(figsize=(9, 0.8 + 0.7 * len(models)), facecolor=SURFACE)
     left = [0] * len(models)
     for k, reason in enumerate(FAILURE_ORDER):
@@ -141,7 +152,7 @@ def chart_failures(reasons: dict, colors: dict, out: Path) -> None:
                   for m in models]
         if not any(counts):
             continue
-        ax.barh(models, counts, left=left, color=SERIES[k], edgecolor=SURFACE, linewidth=2, label=FAILURE_LABELS[reason])
+        ax.barh(names, counts, left=left, color=SERIES[k], edgecolor=SURFACE, linewidth=2, label=FAILURE_LABELS[reason])
         for i, c in enumerate(counts):
             if c:
                 ax.text(left[i] + c / 2, i, str(c), ha="center", va="center", fontsize=8, color=INK)
@@ -171,17 +182,19 @@ def main() -> None:
     summary = metrics.summarize(records)
     by_cwe = metrics.fix_rate_by_cwe(records)
     reasons = metrics.failure_reasons(records)
-    colors = model_colors(list(summary))
+    run = out.name
+    colors = model_colors(list(summary), run)
+    labels = {m: metrics.model_label(m, run) for m in colors}
 
     table = pd.DataFrame(summary).T.loc[list(colors)]
     table.to_csv(out / "summary.csv")
     cwe_table = pd.DataFrame(by_cwe).loc[:, list(colors)]
     cwe_table.to_csv(out / "by_cwe.csv")
 
-    chart_fix_rate(summary, colors, out)
-    chart_by_cwe(by_cwe, colors, out)
-    chart_quality(summary, colors, out)
-    chart_failures(reasons, colors, out)
+    chart_fix_rate(summary, colors, labels, out)
+    chart_by_cwe(by_cwe, colors, labels, out)
+    chart_quality(summary, colors, labels, out)
+    chart_failures(reasons, colors, labels, out)
 
     def shop(model: str) -> str:  # the hand-written demo-shop cases, reported separately
         rows = [r for r in records if r["model"] == model and r.get("source") != "generated"]
@@ -191,10 +204,10 @@ def main() -> None:
              "| Model | Fix rate | 95% interval | Demo shop | First try | Fake fixes | Unreadable | Guard blocked | Avg attempts | Avg time |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for m, s in table.iterrows():
-        lines.append(f"| {m} | **{s.fix_rate:.0%}** ({int(s.fixed)}/{int(s.cases)}) | {s.fix_rate_low:.0%}–{s.fix_rate_high:.0%} | "
+        lines.append(f"| {labels[m]} | **{s.fix_rate:.0%}** ({int(s.fixed)}/{int(s.cases)}) | {s.fix_rate_low:.0%}–{s.fix_rate_high:.0%} | "
                      f"{shop(m)} | {s.first_try_fix_rate:.0%} | {s.fake_fix_rate:.0%} | {s.format_error_rate:.0%} | "
                      f"{s.guard_rejection_rate:.0%} | {s.avg_attempts:.1f} | {s.avg_seconds:.0f}s |")
-    lines += ["", "## Fix rate per vulnerability type", "", "| Type | " + " | ".join(colors) + " |",
+    lines += ["", "## Fix rate per vulnerability type", "", "| Type | " + " | ".join(labels[m] for m in colors) + " |",
               "| --- | " + " | ".join("---" for _ in colors) + " |"]
     for cwe, row in cwe_table.iterrows():
         lines.append(f"| {cwe} {CWE_NAMES.get(cwe, '')} | " + " | ".join(f"{v:.0%}" for v in row) + " |")

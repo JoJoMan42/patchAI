@@ -1,6 +1,6 @@
 # Rules for AI coding agents working on PatchAI
 
-These rules apply to every AI tool used on this repository (Claude, Codex, Gemini, Copilot, Cursor). Read `README.md` for what PatchAI is and `PLAN.md` for how the code is organised.
+These rules apply to every AI tool used on this repository (Claude, Codex, Gemini, Copilot, Cursor). Read `README.md` for what PatchAI is and `docs/PLAN.md` for how the code is organised.
 
 ## Scope
 - Only create or edit the files your task names. Ask before touching anything else.
@@ -18,6 +18,8 @@ These rules apply to every AI tool used on this repository (Claude, Codex, Gemin
 - The app, the extension, the CLI and the evaluation all call `pipeline.fix_finding()`.
 - Fixes are only checked on a temporary copy (`checks.patched_copy`). Only `review.approve()` writes to a real project.
 - RAG: `rag_index.py` builds collections, `rag_search.py` searches them. Both use `embeddings.py`.
+- Demos run on a copy made by `patchai/demo.py`; the tracked demo shop is never edited.
+- The app's pages live in `app/views/`, one page per file.
 
 ## Security rules (non-negotiable)
 - Never use `shell=True`, `eval`, `exec` or `pickle`. Pass commands to `subprocess` as a list.

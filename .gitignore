@@ -11,6 +11,7 @@ data/index/
 data/decisions.jsonl
 data/training/*.jsonl
 eval/results/*/full/
+!eval/results/v2/full/
 
 # Training outputs (large): keep manifests and loss curves, not weights
 training/runs/*/checkpoints/
@@ -41,3 +42,16 @@ data/real_fixes/cache/
 # Downloaded delivery folders and model files (never commit: 2 GB)
 PatchAI_Final_Delivery*/
 training/runs/*/.cache/
+
+# Report builder
+report/node_modules/
+
+# Demo workspace (a scratch copy of the demo shop, recreated on demand)
+data/demo_workspace/
+
+# Written by training/export.py when a model is registered
+training/runs/*/Modelfile
+
+# The owner's local files
+docs/reference/Markdown Live Preview.pdf
+docs/reference/Project_Report-format.docx

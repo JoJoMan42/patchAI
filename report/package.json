@@ -1,0 +1,7 @@
+{
+  "name": "patchai-report",
+  "private": true,
+  "description": "Builds the PatchAI project report (KIIT format)",
+  "scripts": { "build": "node build_report.js PatchAI_Project_Report.docx" },
+  "dependencies": { "docx": "^9.0.0" }
+}

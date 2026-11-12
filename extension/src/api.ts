@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 
-// ---------- Data types (they mirror the server's JSON) ----------
+// ---------- Data types (they mirror the server's JSON; see patchai/models.py) ----------
 
 export type Severity = 'low' | 'medium' | 'high';
 export type Verdict = 'fixed' | 'failed' | 'cannot_fix' | 'false_positive';
@@ -21,6 +21,7 @@ export interface Finding {
   start_line: number; // 1-based
   end_line: number;
   message: string;
+  code: string; // the flagged line(s), for display
 }
 
 /** One piece of information RAG found and gave to the model. */
@@ -46,6 +47,7 @@ export interface CheckResult {
   name: 'format' | 'guard' | 'tests' | 'security_test' | 'rescan';
   passed: boolean;
   details: string;
+  skipped: boolean; // true when the check could not run (e.g. no attack test exists)
 }
 
 /** One try of the fix loop. The proposal is null when the model's answer could not be parsed. */
@@ -54,7 +56,10 @@ export interface Attempt {
   seconds: number;
   diff: string;
   proposal: FixProposal | null;
+  raw_output: string;
   checks: CheckResult[];
+  tokens_in: number;
+  tokens_out: number;
 }
 
 /** Everything the server knows about fixing one finding. */
@@ -67,37 +72,37 @@ export interface FixResult {
   patched_file_text: string | null; // full new file, or null when there is no usable fix
   retrieved: RetrievedChunk[];
   attempts: Attempt[];
+  error: string | null; // set when the pipeline itself failed
 }
 
 export interface Health {
   ok: boolean;
   models: string[];
   default_model: string;
+  version: string;
+  root: string;
+  ollama: boolean;
+  fine_tuned: boolean;
+  semgrep: boolean;
+  problem: string | null;
 }
 
-// ---------- Vulnerability names ----------
-
-export const CWE_NAMES: Record<string, string> = {
-  'CWE-89': 'SQL injection',
-  'CWE-78': 'Command injection',
-  'CWE-22': 'Path traversal',
-  'CWE-79': 'Cross-site scripting',
-  'CWE-798': 'Hard-coded secret',
-  'CWE-327': 'Weak cryptography',
-  'CWE-502': 'Unsafe deserialization',
-};
-
-/** "SQL injection" for the seven known types, otherwise the CWE id or the scanner rule id. */
-export function vulnerabilityName(finding: Finding): string {
-  return (finding.cwe && CWE_NAMES[finding.cwe]) || finding.cwe || finding.rule_id;
+/** One progress event of a running fix job. */
+export interface FixEvent {
+  stage: string;
+  message: string;
 }
 
-/** Short label such as "CWE-89 SQL injection" (or just "CWE-123" / "B105" when the name is unknown). */
-export function findingLabel(finding: Finding): string {
-  const id = finding.cwe ?? finding.rule_id;
-  const name = finding.cwe ? CWE_NAMES[finding.cwe] : undefined;
-  return name ? `${id} ${name}` : id;
+export interface FixStatus {
+  done: boolean;
+  events: FixEvent[];
+  result: FixResult | null;
+  error: string | null;
 }
+
+// ---------- Names and labels (pure, shared with render.ts) ----------
+
+export { ATTACKER_CAN, CWE_NAMES, MODEL_LABELS, findingKey, findingLabel, modelLabel, vulnerabilityName } from './labels';
 
 // ---------- Errors ----------
 
@@ -158,7 +163,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body: unknown, t
   return data as T;
 }
 
-/** Our own timeout, or Node's built-in fetch timeouts (also five minutes). */
+/** Our own timeout, or Node's built-in fetch timeouts. */
 function isTimeout(error: unknown): boolean {
   const err = error as { name?: string; cause?: { code?: string } } | undefined;
   return err?.name === 'TimeoutError' || err?.cause?.code === 'UND_ERR_HEADERS_TIMEOUT' || err?.cause?.code === 'UND_ERR_BODY_TIMEOUT';
@@ -187,19 +192,50 @@ export async function scan(projectDir: string): Promise<Finding[]> {
   return data.findings ?? [];
 }
 
-/** Asks the server to fix one finding. This runs RAG, the model and all checks, so it can take minutes. */
+/** Starts a fix as a background job on the server; poll it with fixStatus. */
+export async function startFix(projectDir: string, finding: Finding, model: string | null): Promise<string> {
+  const data = await request<{ job_id: string }>(
+    'POST', '/fix/start', { project_dir: projectDir, finding, model }, 30 * SECOND,
+  );
+  return data.job_id;
+}
+
+/** The job's progress events so far and, once done, its result or error. */
+export async function fixStatus(jobId: string): Promise<FixStatus> {
+  const status = await request<FixStatus>('GET', `/fix/status/${jobId}`, undefined, 30 * SECOND);
+  return { ...status, result: status.result ? normalize(status.result) : null };
+}
+
+/** The safe demo copy of the vulnerable shop. */
+export async function demoProject(reset: boolean): Promise<string> {
+  const data = await request<{ project_dir: string }>('POST', '/demo', { reset }, 30 * SECOND);
+  return data.project_dir;
+}
+
+/**
+ * The old blocking fix endpoint, kept only for compatibility.
+ * @deprecated Use startFix + fixStatus, which survive fixes longer than Node's 5-minute fetch limit.
+ */
 export async function fix(projectDir: string, finding: Finding, model: string | null): Promise<FixResult> {
   const result = await request<FixResult>('POST', '/fix', { project_dir: projectDir, finding, model }, 5 * MINUTE);
-  // Fill in missing fields so the panel never has to guard against them.
+  return normalize(result);
+}
+
+/** Fills in missing fields so the panel never has to guard against them. */
+function normalize(result: FixResult): FixResult {
   return {
     ...result,
     diff: result.diff ?? '',
+    error: result.error ?? null,
     retrieved: result.retrieved ?? [],
     attempts: (result.attempts ?? []).map(attempt => ({
       ...attempt,
       diff: attempt.diff ?? '',
+      raw_output: attempt.raw_output ?? '',
       proposal: attempt.proposal ?? null,
-      checks: attempt.checks ?? [],
+      checks: (attempt.checks ?? []).map(check => ({ ...check, skipped: check.skipped ?? false })),
+      tokens_in: attempt.tokens_in ?? 0,
+      tokens_out: attempt.tokens_out ?? 0,
     })),
   };
 }

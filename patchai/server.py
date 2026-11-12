@@ -7,19 +7,26 @@ finding, so that the reviewer's decision can be logged with the full details.
 
 from __future__ import annotations
 
+import threading
+import uuid
 from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from patchai import demo as demo_module
 from patchai import llm, review
-from patchai.config import get_config
+from patchai.config import ROOT, get_config
 from patchai.models import Finding, FixResult
 from patchai.pipeline import fix_finding, scan_project
+from patchai.scan import semgrep_available
+
+VERSION = "1.0.0"
 
 app = FastAPI(title="PatchAI local server")
 _recent_fixes: dict[str, FixResult] = {}  # finding id -> latest FixResult
+_jobs: dict[str, dict] = {}  # job id -> {"done", "events", "result", "error"}
 
 
 class ScanRequest(BaseModel):
@@ -40,14 +47,18 @@ class DecisionRequest(BaseModel):
     model: str = ""
 
 
+class DemoRequest(BaseModel):
+    reset: bool = False
+
+
 @app.get("/health")
 def health() -> dict:
-    models = llm.list_models()
-    try:
-        default = llm.resolve_model(None)
-    except llm.LLMError:
-        default = get_config()["models"]["default"]
-    return {"ok": True, "models": models, "default_model": default}
+    status = llm.model_status()
+    default = status["default"] or get_config()["models"]["default"]
+    return {"ok": True, "models": status["installed"], "default_model": default,
+            "version": VERSION, "root": str(ROOT), "ollama": status["ollama"],
+            "fine_tuned": status["fine_tuned"], "semgrep": semgrep_available(),
+            "problem": status["problem"]}
 
 
 @app.post("/scan")
@@ -64,6 +75,46 @@ def fix(request: FixRequest) -> dict:
         raise HTTPException(status_code=503, detail=result.error)
     _recent_fixes[request.finding.id] = result
     return result.model_dump()
+
+
+@app.post("/fix/start")
+def fix_start(request: FixRequest) -> dict:
+    """Start a fix as a background job, so clients can show progress instead of waiting."""
+    project = _project(request.project_dir)
+    job_id = uuid.uuid4().hex
+    job = _jobs[job_id] = {"done": False, "events": [], "result": None, "error": None}
+    while len(_jobs) > 20:  # keep only the newest jobs
+        _jobs.pop(next(iter(_jobs)))
+
+    def run() -> None:
+        result = fix_finding(project, request.finding, model=request.model or None,
+                             on_event=lambda stage, message: job["events"].append(
+                                 {"stage": stage, "message": message}))
+        if result.error and not result.attempts:
+            job["error"] = result.error
+        else:
+            _recent_fixes[request.finding.id] = result
+            job["result"] = result.model_dump()
+        job["done"] = True
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"job_id": job_id}
+
+
+@app.get("/fix/status/{job_id}")
+def fix_status(job_id: str) -> dict:
+    """The events so far and, once done, the result or the error."""
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job id.")
+    return {"done": job["done"], "events": list(job["events"]),
+            "result": job["result"], "error": job["error"]}
+
+
+@app.post("/demo")
+def demo(request: DemoRequest) -> dict:
+    """The safe demo copy of the vulnerable shop (created or reset on demand)."""
+    return {"project_dir": str(demo_module.demo_project(reset=request.reset))}
 
 
 @app.post("/decision")

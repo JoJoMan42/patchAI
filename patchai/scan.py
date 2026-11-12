@@ -109,7 +109,9 @@ def run_semgrep(project_dir: Path, only_file: str | None = None) -> list[Finding
     if semgrep is None or not rules.exists():
         return []
     target = str(project_dir / only_file) if only_file else str(project_dir)
-    command = [semgrep, "scan", "--config", str(rules), "--json", "--quiet", "--metrics=off"]
+    # --no-git-ignore: scan what is on disk. Without it Semgrep silently skips
+    # files that git ignores, which hides vulnerabilities in ignored folders.
+    command = [semgrep, "scan", "--config", str(rules), "--json", "--quiet", "--metrics=off", "--no-git-ignore"]
     for d in SKIP_DIRS:
         command += ["--exclude", d]
     command.append(target)

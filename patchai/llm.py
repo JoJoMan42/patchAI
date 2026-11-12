@@ -67,6 +67,7 @@ def chat(messages: list[dict], model: str, temperature: float | None = None) -> 
             model=model,
             messages=messages,
             format=FixProposal.model_json_schema(),  # structured output: always valid JSON
+            keep_alive=gen.get("keep_alive"),
             options={
                 "temperature": gen["temperature"] if temperature is None else temperature,
                 "num_ctx": gen["context_window"],
@@ -82,6 +83,42 @@ def chat(messages: list[dict], model: str, temperature: float | None = None) -> 
         tokens_out=response.eval_count or 0,
         seconds=time.perf_counter() - started,
     )
+
+
+def warm_up(model: str) -> float:
+    """Load the model into memory before it is needed. Returns the seconds it took."""
+    gen = get_config()["generation"]
+    started = time.perf_counter()
+    try:
+        _client().generate(model=model, keep_alive=gen.get("keep_alive"))  # empty call: just loads
+    except Exception as e:
+        raise LLMError(f"Could not load `{model}`: {e}") from e
+    return time.perf_counter() - started
+
+
+def model_status() -> dict:
+    """What the interfaces show about the model setup. Never raises.
+
+    Keys: ollama (bool), installed (list), default (str | None),
+    fine_tuned (bool), problem (str | None, one sentence for the user).
+    """
+    cfg = get_config()["models"]
+    installed = list_models()
+    if not installed:
+        return {"ollama": False, "installed": [], "default": None, "fine_tuned": False,
+                "problem": "Ollama is not running. Install it from https://ollama.com and run `ollama serve`."}
+    try:
+        default = resolve_model(None)
+    except LLMError as e:
+        return {"ollama": True, "installed": installed, "default": None, "fine_tuned": False,
+                "problem": str(e)}
+    fine_tuned = default.startswith("patchai")
+    problem = None
+    if not fine_tuned:
+        problem = (f"The fine-tuned model `{cfg['default']}` is not installed, so the base model "
+                   f"`{default}` is used. See training/README.md.")
+    return {"ollama": True, "installed": installed, "default": default,
+            "fine_tuned": fine_tuned, "problem": problem}
 
 
 def _is_installed(name: str, installed: list[str]) -> bool:

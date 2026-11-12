@@ -1,4 +1,6 @@
 // Press F5 to compile the extension and open an Extension Development Host window with it loaded.
+// To try the demo, run "PatchAI: Open Demo Project" in that window: it opens a safe copy of
+// the vulnerable shop, so the tracked demo_projects/vuln_shop is never edited.
 {
   "version": "0.2.0",
   "configurations": [
@@ -7,17 +9,6 @@
       "type": "extensionHost",
       "request": "launch",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
-      "outFiles": ["${workspaceFolder}/out/**/*.js"],
-      "preLaunchTask": "npm: compile"
-    },
-    {
-      "name": "Run PatchAI Extension on vuln_shop (demo)",
-      "type": "extensionHost",
-      "request": "launch",
-      "args": [
-        "--extensionDevelopmentPath=${workspaceFolder}",
-        "${workspaceFolder}/../demo_projects/vuln_shop"
-      ],
       "outFiles": ["${workspaceFolder}/out/**/*.js"],
       "preLaunchTask": "npm: compile"
     }

@@ -4,15 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "patchai"
-version = "0.1.0"
+version = "1.0.0"
 description = "An AI that fixes security vulnerabilities in Python code, using a fine-tuned model and RAG."
 requires-python = ">=3.11"
+dynamic = ["dependencies"]
 
 [project.scripts]
 patchai = "patchai.cli:app"
 
 [tool.setuptools]
 packages = ["patchai"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

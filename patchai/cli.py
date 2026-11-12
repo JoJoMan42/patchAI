@@ -1,9 +1,12 @@
 """Command line for PatchAI.
 
-  patchai doctor                      check that everything is installed
+  patchai doctor [--warm]             check that everything is installed (and load the model)
   patchai scan  <project>             list vulnerabilities
   patchai index <project>             build the RAG indexes
   patchai fix   <project> [--finding ID] [--model NAME]   fix one, then approve or reject
+  patchai demo  [--reset]             the safe demo copy of the vulnerable shop
+  patchai app                         open the review app in the browser
+  patchai serve [--port 8765]         run the local server for the VS Code extension
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ console = Console()
 
 
 @app.command()
-def doctor() -> None:
+def doctor(warm: bool = typer.Option(False, "--warm", help="Also load the model into memory now")) -> None:
     """Check that the scanners, the model server, the models and RAG are ready."""
     from patchai.embeddings import get_embedder, get_reranker
     from patchai.scan import semgrep_available
@@ -37,8 +40,9 @@ def doctor() -> None:
     console.print("[bold]PatchAI setup check[/]")
     row("Bandit", True, "installed")
     row("Semgrep", semgrep_available(), "installed" if semgrep_available() else "missing: pip install semgrep (needed for path traversal and XSS)")
-    models = llm.list_models()
-    row("Ollama", bool(models), "running" if models else "not running: install from https://ollama.com, then `ollama serve`")
+    status = llm.model_status()
+    models = status["installed"]
+    row("Ollama", status["ollama"], "running" if status["ollama"] else "not running: install from https://ollama.com, then `ollama serve`")
     for name in [get_config()["models"]["default"], *get_config()["models"]["fallbacks"]]:
         have = name in models
         hint = "installed" if have else ("train it (see training/README.md)" if name.startswith("patchai") else f"`ollama pull {name}`")
@@ -47,6 +51,41 @@ def doctor() -> None:
     row("Embeddings", embedder.name != "hash", embedder.name)
     reranker = get_reranker()
     row("Reranker", reranker is not None, reranker.name if reranker else "off")
+    if status["default"]:
+        console.print(f"  Fixes will use [bold]{status['default']}[/].")
+    if status["problem"]:
+        console.print(f"  [yellow]{status['problem']}[/]")
+    if warm and status["default"]:
+        with console.status(f"Loading {status['default']}..."):
+            seconds = llm.warm_up(status["default"])
+        console.print(f"  Model loaded in {seconds:.0f}s and kept in memory.")
+
+
+@app.command()
+def demo(reset: bool = typer.Option(False, "--reset", help="Throw away every applied fix")) -> None:
+    """Print the path of the safe demo copy of the vulnerable shop (created on first use)."""
+    from patchai.demo import demo_project
+
+    console.print(str(demo_project(reset=reset)))
+
+
+@app.command(name="app")
+def run_app() -> None:
+    """Open the review app in the browser."""
+    import subprocess
+    import sys
+
+    from patchai.config import ROOT
+
+    subprocess.run([sys.executable, "-m", "streamlit", "run", str(ROOT / "app" / "review_app.py")], check=False)
+
+
+@app.command()
+def serve(port: int = typer.Option(8765, help="Port for the local server")) -> None:
+    """Run the local server the VS Code extension talks to."""
+    import uvicorn
+
+    uvicorn.run("patchai.server:app", host="127.0.0.1", port=port)
 
 
 @app.command()
